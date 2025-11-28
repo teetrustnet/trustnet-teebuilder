@@ -30,7 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/bloombits"
+	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -323,7 +323,9 @@ func (b *backendMock) CurrentHeader() *types.Header     { return b.current }
 func (b *backendMock) ChainConfig() *params.ChainConfig { return b.config }
 
 // Other methods needed to implement Backend interface.
-func (b *backendMock) SyncProgress() ethereum.SyncProgress { return ethereum.SyncProgress{} }
+func (b *backendMock) SyncProgress(ctx context.Context) ethereum.SyncProgress {
+	return ethereum.SyncProgress{}
+}
 func (b *backendMock) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, []*big.Int, []float64, error) {
 	return nil, nil, nil, nil, nil, nil, nil
 }
@@ -336,7 +338,6 @@ func (b *backendMock) RPCGasCap() uint64                 { return 0 }
 func (b *backendMock) RPCEVMTimeout() time.Duration      { return time.Second }
 func (b *backendMock) RPCTxFeeCap() float64              { return 0 }
 func (b *backendMock) UnprotectedAllowed() bool          { return false }
-func (b *backendMock) PrivateTxMode() bool               { return false }
 func (b *backendMock) SetHead(number uint64)             {}
 func (b *backendMock) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
 	return nil, nil
@@ -373,6 +374,9 @@ func (b *backendMock) GetReceipts(ctx context.Context, hash common.Hash) (types.
 func (b *backendMock) GetBlobSidecars(ctx context.Context, hash common.Hash) (types.BlobSidecars, error) {
 	return nil, nil
 }
+func (b *backendMock) GetCanonicalReceipt(tx *types.Transaction, blockHash common.Hash, blockNumber, blockIndex uint64) (*types.Receipt, error) {
+	return nil, nil
+}
 func (b *backendMock) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
 	return nil, nil
 }
@@ -390,21 +394,11 @@ func (b *backendMock) SubscribeFinalizedHeaderEvent(ch chan<- core.FinalizedHead
 func (b *backendMock) SubscribeNewVoteEvent(ch chan<- core.NewVoteEvent) event.Subscription {
 	return nil
 }
-func (b *backendMock) SendTx(ctx context.Context, signedTx *types.Transaction, private bool) error {
-	return nil
+func (b *backendMock) SendTx(ctx context.Context, signedTx *types.Transaction) error { return nil }
+func (b *backendMock) GetCanonicalTransaction(txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64) {
+	return false, nil, [32]byte{}, 0, 0
 }
-func (b *backendMock) SendBundle(ctx context.Context, bundle *types.Bundle) error { return nil }
-func (b *backendMock) SimulateGaslessBundle(bundle *types.Bundle) (*types.SimulateGaslessBundleResp, error) {
-	//TODO implement me
-	panic("implement me")
-}
-func (b *backendMock) BundlePrice() *big.Int { return nil }
-func (b *backendMock) Bundles(ctx context.Context, fromBlock, toBlock int64) []*types.BundlesItem {
-	panic("implement me")
-}
-func (b *backendMock) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
-	return false, nil, [32]byte{}, 0, 0, nil
-}
+func (b *backendMock) TxIndexDone() bool                                        { return true }
 func (b *backendMock) GetPoolTransactions() (types.Transactions, error)         { return nil, nil }
 func (b *backendMock) GetPoolTransaction(txHash common.Hash) *types.Transaction { return nil }
 func (b *backendMock) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
@@ -417,10 +411,8 @@ func (b *backendMock) TxPoolContent() (map[common.Address][]*types.Transaction, 
 func (b *backendMock) TxPoolContentFrom(addr common.Address) ([]*types.Transaction, []*types.Transaction) {
 	return nil, nil
 }
-func (b *backendMock) SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription      { return nil }
-func (b *backendMock) BloomStatus() (uint64, uint64)                                        { return 0, 0 }
-func (b *backendMock) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {}
-func (b *backendMock) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription         { return nil }
+func (b *backendMock) SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription { return nil }
+func (b *backendMock) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription    { return nil }
 func (b *backendMock) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription {
 	return nil
 }
@@ -441,7 +433,8 @@ func (b *backendMock) RemoveBuilder(builder common.Address) error               
 func (b *backendMock) SendBid(ctx context.Context, bid *types.BidArgs) (common.Hash, error) {
 	panic("implement me")
 }
-func (b *backendMock) MinerInTurn() bool { return false }
-func (b *backendMock) BestBidGasFee(parentHash common.Hash) *big.Int {
-	panic("implement me")
-}
+func (b *backendMock) MinerInTurn() bool                            { return false }
+func (b *backendMock) CurrentView() *filtermaps.ChainView           { return nil }
+func (b *backendMock) NewMatcherBackend() filtermaps.MatcherBackend { return nil }
+
+func (b *backendMock) HistoryPruningCutoff() uint64 { return 0 }

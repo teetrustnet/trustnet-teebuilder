@@ -159,7 +159,7 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 			return nil, nil, fmt.Errorf("processing block %d failed: %v", current.NumberU64(), err)
 		}
 		// Finalize the state so any modifications are written to the trie
-		root, _, err := statedb.Commit(current.NumberU64(), eth.blockchain.Config().IsEIP158(current.Number()), eth.blockchain.Config().IsCancun(current.Number(), current.Time()))
+		root, err := statedb.Commit(current.NumberU64(), eth.blockchain.Config().IsEIP158(current.Number()), eth.blockchain.Config().IsCancun(current.Number(), current.Time()))
 		if err != nil {
 			return nil, nil, fmt.Errorf("stateAtBlock commit failed, number %d root %v: %w",
 				current.NumberU64(), current.Root().Hex(), err)
@@ -189,10 +189,11 @@ func (eth *Ethereum) pathState(block *types.Block) (*state.StateDB, func(), erro
 	if err == nil {
 		return statedb, noopReleaser, nil
 	}
-	// TODO historic state is not supported in path-based scheme.
-	// Fully archive node in pbss will be implemented by relying
-	// on state history, but needs more work on top.
-	return nil, nil, errors.New("historical state not available in path scheme yet")
+	statedb, err = eth.blockchain.HistoricState(block.Root())
+	if err == nil {
+		return statedb, noopReleaser, nil
+	}
+	return nil, nil, errors.New("historical state is not available")
 }
 
 // stateAtBlock retrieves the state database associated with a certain block.
@@ -224,7 +225,13 @@ func (eth *Ethereum) stateAtBlock(ctx context.Context, block *types.Block, reexe
 	return eth.pathState(block)
 }
 
-// stateAtTransaction returns the execution environment of a certain transaction.
+// stateAtTransaction returns the execution environment of a certain
+// transaction.
+//
+// Note: when a block is empty and the state for tx index 0 is requested, this
+// function will return the state of block after the pre-block operations have
+// been completed (e.g. updating system contracts), but before post-block
+// operations are completed (e.g. processing withdrawals).
 func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*types.Transaction, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	// Short circuit if it's genesis block.
 	if block.NumberU64() == 0 {
@@ -241,7 +248,7 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
-	// upgrade build-in system contract before normal txs if Feynman is not enabled
+	// upgrade built-in system contract before normal txs if Feynman is not enabled
 	systemcontracts.TryUpdateBuildInSystemContract(eth.blockchain.Config(), block.Number(), parent.Time(), block.Time(), statedb, true)
 	// Insert parent beacon block root in the state as per EIP-4788.
 	context := core.NewEVMBlockContext(block.Header(), eth.blockchain, nil)
@@ -254,7 +261,7 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
 	if txIndex == 0 && len(block.Transactions()) == 0 {
-		return nil, vm.BlockContext{}, statedb, release, nil
+		return nil, context, statedb, release, nil
 	}
 	// Recompute transactions up to the target index.
 	var (
@@ -262,7 +269,7 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 		beforeSystemTx = true
 	)
 	for idx, tx := range block.Transactions() {
-		// upgrade build-in system contract before system txs if Feynman is enabled
+		// upgrade built-in system contract before system txs if Feynman is enabled
 		if beforeSystemTx {
 			if posa, ok := eth.Engine().(consensus.PoSA); ok {
 				if isSystem, _ := posa.IsSystemTransaction(tx, block.Header()); isSystem {
