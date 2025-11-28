@@ -87,6 +87,7 @@ type BundlePool struct {
 
 	simulator  BundleSimulator
 	blockchain BlockChain
+	clearQuit  chan struct{}
 }
 
 func (p *BundlePool) GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg4844.Proof) {
@@ -94,6 +95,12 @@ func (p *BundlePool) GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg484
 }
 
 func (p *BundlePool) Clear() {
+}
+
+func (p *BundlePool) MinPrice() *big.Int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.minimalBundleGasPrice()
 }
 
 func New(config Config, chain BlockChain) *BundlePool {
@@ -106,6 +113,7 @@ func New(config Config, chain BlockChain) *BundlePool {
 		bundleHeap:    make(BundleHeap, 0),
 		blockchain:    chain,
 		bundleMetrics: make(map[int64][][]common.Hash),
+		clearQuit:     make(chan struct{}),
 	}
 
 	go pool.clearLoop()
@@ -117,14 +125,26 @@ func (p *BundlePool) clearLoop() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		currentNumber := p.blockchain.CurrentBlock().Number.Int64()
+	for {
+		select {
+		case <-p.clearQuit:
+			return
+		case <-ticker.C:
+			if p.blockchain == nil {
+				continue
+			}
+			current := p.blockchain.CurrentBlock()
+			if current == nil {
+				continue
+			}
+			currentNumber := current.Number.Int64()
 
-		for number := range p.bundleMetrics {
-			if number <= currentNumber-types.MaxBundleAliveBlock {
-				p.bundleMetricsMu.Lock()
-				delete(p.bundleMetrics, number)
-				p.bundleMetricsMu.Unlock()
+			for number := range p.bundleMetrics {
+				if number <= currentNumber-types.MaxBundleAliveBlock {
+					p.bundleMetricsMu.Lock()
+					delete(p.bundleMetrics, number)
+					p.bundleMetricsMu.Unlock()
+				}
 			}
 		}
 	}
@@ -134,7 +154,7 @@ func (p *BundlePool) SetBundleSimulator(simulator BundleSimulator) {
 	p.simulator = simulator
 }
 
-func (p *BundlePool) Init(gasTip uint64, head *types.Header, reserve txpool.AddressReserver) error {
+func (p *BundlePool) Init(gasTip uint64, head *types.Header, reserve txpool.Reserver) error {
 	return nil
 }
 
@@ -263,6 +283,13 @@ func (p *BundlePool) Filter(tx *types.Transaction) bool {
 }
 
 func (p *BundlePool) Close() error {
+	if p.clearQuit != nil {
+		select {
+		case <-p.clearQuit:
+		default:
+			close(p.clearQuit)
+		}
+	}
 	log.Info("Bundle pool stopped")
 	return nil
 }
@@ -289,6 +316,18 @@ func (p *BundlePool) Get(hash common.Hash) *types.Transaction {
 	return nil
 }
 
+func (p *BundlePool) GetRLP(hash common.Hash) []byte { return nil }
+
+// GetMetadata returns a pseudo metadata for bundle hash if tracked.
+func (p *BundlePool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if b := p.bundles[hash]; b != nil {
+		return &txpool.TxMetadata{Type: 0, Size: b.Size()}
+	}
+	return nil
+}
+
 // Add enqueues a batch of transactions into the pool if they are valid. Due
 // to the large transaction churn, add may postpone fully integrating the tx
 // to a later point to batch multiple ones together.
@@ -306,6 +345,8 @@ func (p *BundlePool) Pending(filter txpool.PendingFilter) map[common.Address][]*
 func (p *BundlePool) IsPrivateTxHash(hash common.Hash) bool {
 	return false
 }
+
+func (p *BundlePool) ValidateTxBasics(tx *types.Transaction) error { return nil }
 
 // SubscribeTransactions subscribes to new transaction events.
 func (p *BundlePool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {

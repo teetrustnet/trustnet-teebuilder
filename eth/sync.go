@@ -81,7 +81,7 @@ type chainSyncOp struct {
 func newChainSyncer(handler *handler) *chainSyncer {
 	return &chainSyncer{
 		handler:     handler,
-		peerEventCh: make(chan struct{}),
+		peerEventCh: make(chan struct{}, 10),
 	}
 }
 
@@ -130,7 +130,7 @@ func (cs *chainSyncer) loop() {
 			// Disable all insertion on the blockchain. This needs to happen before
 			// terminating the downloader because the downloader waits for blockchain
 			// inserts, and these can take a long time to finish.
-			cs.handler.chain.StopInsert()
+			cs.handler.chain.InterruptInsert(true)
 			cs.handler.downloader.Terminate()
 			if cs.doneCh != nil {
 				<-cs.doneCh
@@ -185,7 +185,20 @@ func (cs *chainSyncer) nextSyncOp() *chainSyncOp {
 		// 		cs.handler.acceptTxs.Store(false)
 		// 		log.Info("Disable transaction acceptance randomly for the delay exceeding 10 blocks.")
 		// 	}
+	} else if op.td.Cmp(new(big.Int).Add(ourTD, common.Big2)) <= 0 { // common.Big2: difficulty of an in-turn block
+		// On BSC, blocks are produced much faster than on Ethereum.
+		// If the node is only slightly behind (e.g., 1 block), syncing is unnecessary.
+		// It's likely still processing broadcasted blocks(such as including a big tx) or block hash announcements.
+		// In most cases, the node will catch up within 2 seconds.
+		time.Sleep(2 * time.Second)
+
+		// Re-check local head to see if it has caught up
+		if _, latestTD := cs.modeAndLocalHead(); ourTD.Cmp(latestTD) < 0 {
+			log.Trace("The local head is already caught up; synchronization is not required.")
+			return nil
+		}
 	}
+
 	return op
 }
 
@@ -206,9 +219,6 @@ func (cs *chainSyncer) modeAndLocalHead() (downloader.SyncMode, *big.Int) {
 	head := cs.handler.chain.CurrentBlock()
 	if pivot := rawdb.ReadLastPivotNumber(cs.handler.database); pivot != nil {
 		if head.Number.Uint64() < *pivot {
-			if rawdb.ReadAncientType(cs.handler.database) == rawdb.PruneFreezerType {
-				log.Crit("Current rewound to before the fast sync pivot, can't enable pruneancient mode", "current block number", head.Number.Uint64(), "pivot", *pivot)
-			}
 			block := cs.handler.chain.CurrentSnapBlock()
 			td := cs.handler.chain.GetTd(block.Hash(), block.Number.Uint64())
 			return ethconfig.SnapSync, td
@@ -252,9 +262,6 @@ func (h *handler) doSync(op *chainSyncOp) error {
 		// degenerate connectivity, but it should be healthy for the mainnet too to
 		// more reliably update peers or the local TD state.
 		if block := h.chain.GetBlock(head.Hash(), head.Number.Uint64()); block != nil {
-			if h.chain.Config().IsCancun(block.Number(), block.Time()) {
-				block = block.WithSidecars(h.chain.GetSidecarsByHash(block.Hash()))
-			}
 			h.BroadcastBlock(block, false)
 		}
 	}

@@ -31,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
@@ -126,7 +125,7 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			blockchain, _  = NewBlockChain(db, nil, gspec, nil, beacon.New(ethash.NewFaker()), vm.Config{}, nil, nil)
+			blockchain, _  = NewBlockChain(db, gspec, beacon.New(ethash.NewFaker()), nil)
 			tooBigInitCode = [params.MaxInitCodeSize + 1]byte{}
 		)
 
@@ -256,7 +255,8 @@ func TestStateProcessorErrors(t *testing.T) {
 				},
 				want: "could not apply tx 0 [0xc18d10f4c809dbdfa1a074c3300de9bc4b7f16a20f0ec667f6f67312b71b956a]: EIP-7702 transaction with empty auth list (sender 0x71562b71999873DB5b286dF957af199Ec94617F7)",
 			},
-			// ErrSetCodeTxCreate cannot be tested: it is impossible to create a SetCode-tx with nil `to`.
+			// ErrSetCodeTxCreate cannot be tested here: it is impossible to create a SetCode-tx with nil `to`.
+			// The EstimateGas API tests test this case.
 		} {
 			block := GenerateBadBlock(gspec.ToBlock(), beacon.New(ethash.NewFaker()), tt.txs, gspec.Config, false)
 			_, err := blockchain.InsertChain(types.Blocks{block})
@@ -293,7 +293,7 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			blockchain, _ = NewBlockChain(db, nil, gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
+			blockchain, _ = NewBlockChain(db, gspec, ethash.NewFaker(), nil)
 		)
 		defer blockchain.Stop()
 		for i, tt := range []struct {
@@ -332,7 +332,7 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			blockchain, _ = NewBlockChain(db, nil, gspec, nil, beacon.New(ethash.NewFaker()), vm.Config{}, nil, nil)
+			blockchain, _ = NewBlockChain(db, gspec, beacon.New(ethash.NewFaker()), nil)
 		)
 		defer blockchain.Stop()
 		for i, tt := range []struct {

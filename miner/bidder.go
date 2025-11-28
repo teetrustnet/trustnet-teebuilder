@@ -3,10 +3,11 @@ package miner
 import (
 	"context"
 	"errors"
-	"github.com/ethereum/go-ethereum/consensus/parlia"
 	"math/big"
 	"sync"
 	"time"
+
+	"github.com/ethereum/go-ethereum/consensus/parlia"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -60,20 +61,20 @@ func NewBidder(config *minerconfig.MevConfig, delayLeftOver time.Duration, engin
 		exitCh:        make(chan struct{}),
 	}
 
-	if !config.BuilderEnabled {
+	if config.Enabled == nil || !*config.Enabled {
 		return b
 	}
 
-	wallet, err := eth.AccountManager().Find(accounts.Account{Address: config.BuilderAccount})
+	// use miner etherbase as builder account
+	// fallback to etherbase configured in minerconfig
+	wallet, err := eth.AccountManager().Find(accounts.Account{Address: config.Builders[0].Address})
 	if err != nil {
 		log.Crit("Bidder: failed to find builder account", "err", err)
 	}
 
 	b.wallet = wallet
 
-	for _, v := range config.Validators {
-		b.register(v)
-	}
+	// Validators registration is not configured in MevConfig in this codebase; skip
 
 	if len(b.validators) == 0 {
 		log.Warn("Bidder: No valid validators")
@@ -94,8 +95,13 @@ func (b *Bidder) mainLoop() {
 	<-timer.C // discard the initial tick
 
 	var (
-		bidNum          uint32 = 0
-		maxBid                 = *b.config.MaxBidsPerBuilder
+		bidNum uint32 = 0
+		maxBid        = func() uint32 {
+			if b.config.MaxBidsPerBuilder != nil {
+				return *b.config.MaxBidsPerBuilder
+			}
+			return 1
+		}()
 		betterBidBefore time.Time
 		currentHeight   = b.chain.CurrentBlock().Number.Int64()
 	)
@@ -107,14 +113,11 @@ func (b *Bidder) mainLoop() {
 
 				bidNum = 0
 				parentHeader := b.chain.GetHeaderByHash(work.header.ParentHash)
-				var bidSimulationLeftOver time.Duration
-				b.validatorsMu.RLock()
-				if b.validators[work.coinbase] != nil {
-					bidSimulationLeftOver = b.validators[work.coinbase].BidSimulationLeftOver
+				bidSimulationLeftOver := b.delayLeftOver
+				if b.config.BidSimulationLeftOver != nil {
+					bidSimulationLeftOver = *b.config.BidSimulationLeftOver
 				}
-				b.validatorsMu.RUnlock()
-				betterBidBefore = bidutil.BidBetterBefore(parentHeader, b.getBlockInterval(parentHeader), b.delayLeftOver,
-					bidSimulationLeftOver)
+				betterBidBefore = bidutil.BidBetterBefore(parentHeader, b.getBlockInterval(parentHeader), b.delayLeftOver, bidSimulationLeftOver)
 
 				timer.Reset(0)
 			}
@@ -148,13 +151,7 @@ func (b *Bidder) reconnectLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			for _, v := range b.config.Validators {
-				if b.isRegistered(v.Address) {
-					continue
-				}
-
-				b.register(v)
-			}
+			// no-op: external validator registration not used in this merge
 		case <-b.exitCh:
 			return
 		}
@@ -168,29 +165,8 @@ func (b *Bidder) isRegistered(validator common.Address) bool {
 	return ok
 }
 
-func (b *Bidder) register(cfg minerconfig.ValidatorConfig) {
-	b.validatorsMu.Lock()
-	defer b.validatorsMu.Unlock()
-
-	cl, err := validatorclient.DialOptions(context.Background(), cfg.URL, rpc.WithHTTPClient(client))
-	if err != nil {
-		log.Error("Bidder: failed to dial validator", "url", cfg.URL, "err", err)
-		return
-	}
-
-	params, err := cl.MevParams(context.Background())
-	if err != nil {
-		log.Error("Bidder: failed to get mev params", "url", cfg.URL, "err", err)
-		return
-	}
-
-	b.validators[cfg.Address] = &validator{
-		Client:                cl,
-		BidSimulationLeftOver: params.BidSimulationLeftOver,
-		GasCeil:               params.GasCeil,
-	}
-	log.Info("Bidder: register", "validator", cfg.Address, "params", params)
-}
+// registerValidatorEndpoint is currently unused in this merged codebase.
+func (b *Bidder) registerValidatorEndpoint(url string, address common.Address) {}
 
 func (b *Bidder) unregister(validator common.Address) {
 	b.validatorsMu.Lock()
@@ -348,12 +324,17 @@ func (b *Bidder) signBid(bid *types.RawBid) ([]byte, error) {
 		return nil, err
 	}
 
-	return b.wallet.SignData(accounts.Account{Address: b.config.BuilderAccount}, accounts.MimetypeTextPlain, bz)
+	// use first builder address if available
+	addr := common.Address{}
+	if len(b.config.Builders) > 0 {
+		addr = b.config.Builders[0].Address
+	}
+	return b.wallet.SignData(accounts.Account{Address: addr}, accounts.MimetypeTextPlain, bz)
 }
 
 // enabled returns whether the bid is enabled
 func (b *Bidder) enabled() bool {
-	return b.config.BuilderEnabled
+	return b.config.Enabled != nil && *b.config.Enabled
 }
 
 // get block interval for current block by using parent header
