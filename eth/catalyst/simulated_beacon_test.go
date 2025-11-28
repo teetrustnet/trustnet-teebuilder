@@ -114,9 +114,9 @@ func testSimulatedBeaconSendWithdrawals(t *testing.T) {
 		}
 		txs[tx.Hash()] = tx
 
-		if err := ethService.APIBackend.SendTx(context.Background(), tx, false); err != nil {
-			t.Fatal("SendTx failed", err)
-		}
+        if err := ethService.APIBackend.SendTx(context.Background(), tx); err != nil {
+            t.Fatal("SendTx failed", err)
+        }
 	}
 
 	includedTxs := make(map[common.Hash]struct{})

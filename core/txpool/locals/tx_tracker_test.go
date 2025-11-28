@@ -145,7 +145,7 @@ func TestResubmit(t *testing.T) {
 	txs := env.makeTxs(10)
 	txsA := txs[:len(txs)/2]
 	txsB := txs[len(txs)/2:]
-	env.pool.Add(txsA, true)
+	env.pool.Add(txsA, true, false)
 	pending, queued := env.pool.ContentFrom(address)
 	if len(pending) != len(txsA) || len(queued) != 0 {
 		t.Fatalf("Unexpected txpool content: %d, %d", len(pending), len(queued))

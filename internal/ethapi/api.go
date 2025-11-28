@@ -1972,8 +1972,14 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction, pr
 		// Ensure only eip155 signed transactions are submitted if EIP155Required is set.
 		return common.Hash{}, errors.New("only replay-protected (EIP-155) transactions allowed over RPC")
 	}
-	if err := b.SendTx(ctx, tx, private); err != nil {
-		return common.Hash{}, err
+	if private {
+		if err := b.SendPrivateTx(ctx, tx); err != nil {
+			return common.Hash{}, err
+		}
+	} else {
+		if err := b.SendTx(ctx, tx); err != nil {
+			return common.Hash{}, err
+		}
 	}
 	// Print a log with full tx details for manual investigations and interventions
 	head := b.CurrentBlock()
@@ -2230,7 +2236,7 @@ func (api *TransactionAPI) Resend(ctx context.Context, sendArgs TransactionArgs,
 			if err != nil {
 				return common.Hash{}, err
 			}
-			if err = api.b.SendTx(ctx, signedTx, false); err != nil {
+			if err = api.b.SendTx(ctx, signedTx); err != nil {
 				return common.Hash{}, err
 			}
 			return signedTx.Hash(), nil

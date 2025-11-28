@@ -79,6 +79,7 @@ type Backend interface {
 
 	// Transaction pool API
 	SendTx(ctx context.Context, signedTx *types.Transaction) error
+	SendPrivateTx(ctx context.Context, signedTx *types.Transaction) error
 	GetCanonicalTransaction(txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64)
 	TxIndexDone() bool
 	GetPoolTransactions() (types.Transactions, error)
@@ -126,6 +127,12 @@ type Backend interface {
 
 	CurrentView() *filtermaps.ChainView
 	NewMatcherBackend() filtermaps.MatcherBackend
+	// Private tx & bundle APIs
+	PrivateTxMode() bool
+	BundlePrice() *big.Int
+	SimulateGaslessBundle(bundle *types.Bundle) (*types.SimulateGaslessBundleResp, error)
+	SendBundle(ctx context.Context, bundle *types.Bundle) error
+	Bundles(ctx context.Context, fromBlock, toBlock int64) []*types.BundlesItem
 }
 
 func GetAPIs(apiBackend Backend) []rpc.API {

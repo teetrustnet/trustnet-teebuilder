@@ -1202,7 +1202,7 @@ func TestBlobCountLimit(t *testing.T) {
 		tx1 = makeMultiBlobTx(0, 1, 1000, 100, 6, key1)
 		tx2 = makeMultiBlobTx(0, 1, 800, 70, 8, key2)
 	)
-	errs := pool.Add([]*types.Transaction{tx1, tx2}, true)
+    errs := pool.Add([]*types.Transaction{tx1, tx2}, true, false)
 
 	// Check that first succeeds second fails.
 	if errs[0] != nil {
@@ -1635,10 +1635,10 @@ func TestAdd(t *testing.T) {
 		// Add each transaction one by one, verifying the pool internals in between
 		for j, add := range tt.adds {
 			signed, _ := types.SignNewTx(keys[add.from], types.LatestSigner(params.MainnetChainConfig), add.tx)
-			if err := pool.add(signed, false); !errors.Is(err, add.err) {
+            if err := pool.add(signed); !errors.Is(err, add.err) {
 				t.Errorf("test %d, tx %d: adding transaction error mismatch: have %v, want %v", i, j, err, add.err)
 			}
-			if add.err == nil {
+            if add.err == nil {
 				size, exist := pool.lookup.sizeOfTx(signed.Hash())
 				if !exist {
 					t.Errorf("test %d, tx %d: failed to lookup transaction's size", i, j)
@@ -1751,7 +1751,7 @@ func benchmarkPoolPending(b *testing.B, datacap uint64) {
 			b.Fatal(err)
 		}
 		statedb.AddBalance(addr, uint256.NewInt(1_000_000_000), tracing.BalanceChangeUnspecified)
-		pool.add(tx, false)
+        pool.add(tx)
 	}
 	statedb.Commit(0, true, false)
 	defer pool.Close()

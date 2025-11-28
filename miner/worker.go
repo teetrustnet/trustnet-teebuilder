@@ -93,22 +93,27 @@ var (
 // environment is the worker's current environment and holds all
 // information of the sealing block generation.
 type environment struct {
-	signer   types.Signer
-	state    *state.StateDB // apply state changes here
-	tcount   int            // count of non-system transactions in cycle
-	gasPool  *core.GasPool  // available gas used to pack transactions
-	coinbase common.Address
-	evm      *vm.EVM
+    signer   types.Signer
+    state    *state.StateDB // apply state changes here
+    tcount   int            // count of non-system transactions in cycle
+    gasPool  *core.GasPool  // available gas used to pack transactions
+    coinbase common.Address
+    evm      *vm.EVM
 
-	header   *types.Header
-	txs      []*types.Transaction
-	receipts []*types.Receipt
-	sidecars types.BlobSidecars
-	blobs    int
+    header   *types.Header
+    txs      []*types.Transaction
+    receipts []*types.Receipt
+    sidecars types.BlobSidecars
+    blobs    int
 
-	witness *stateless.Witness
+    witness *stateless.Witness
 
-	committed bool
+    committed bool
+
+    profit       *big.Int
+    UnRevertible []common.Hash
+    duration     time.Duration
+    size         uint32
 }
 
 // discard terminates the background prefetcher go-routine. It should
@@ -213,19 +218,21 @@ type worker struct {
 
 	// recommit is the time interval to re-create sealing work or to re-build
 	// payload in proof-of-stake stage.
-	recommit          time.Duration
-	recentMinedBlocks *lru.Cache[uint64, []common.Hash]
+    recommit          time.Duration
+    recentMinedBlocks *lru.Cache[uint64, []common.Hash]
+    bundleCache       *BundleCache
+    pendingLogsFeed   event.Feed
 
-	// Test hooks
-	newTaskHook  func(*task)                        // Method to call upon receiving a new sealing task.
-	skipSealHook func(*task) bool                   // Method to decide whether skipping the sealing.
-	fullTaskHook func()                             // Method to call before pushing the full sealing task.
-	resubmitHook func(time.Duration, time.Duration) // Method to call upon updating resubmitting interval.
+    // Test hooks
+    newTaskHook  func(*task)                        // Method to call upon receiving a new sealing task.
+    skipSealHook func(*task) bool                   // Method to decide whether skipping the sealing.
+    fullTaskHook func()                             // Method to call before pushing the full sealing task.
+    resubmitHook func(time.Duration, time.Duration) // Method to call upon updating resubmitting interval.
 }
 
 func newWorker(config *minerconfig.Config, engine consensus.Engine, eth Backend, mux *event.TypeMux) *worker {
-	chainConfig := eth.BlockChain().Config()
-	worker := &worker{
+    chainConfig := eth.BlockChain().Config()
+    worker := &worker{
 		prefetcher:         core.NewStatePrefetcher(chainConfig, eth.BlockChain().HeadChain()),
 		config:             config,
 		chainConfig:        chainConfig,
@@ -244,9 +251,10 @@ func newWorker(config *minerconfig.Config, engine consensus.Engine, eth Backend,
 		resultCh:           make(chan *types.Block, resultQueueSize),
 		startCh:            make(chan struct{}, 1),
 		exitCh:             make(chan struct{}),
-		resubmitIntervalCh: make(chan time.Duration),
-		recentMinedBlocks:  lru.NewCache[uint64, []common.Hash](recentMinedCacheLimit),
-	}
+        resubmitIntervalCh: make(chan time.Duration),
+        recentMinedBlocks:  lru.NewCache[uint64, []common.Hash](recentMinedCacheLimit),
+        bundleCache:        NewBundleCache(),
+    }
 	// Subscribe events for blockchain
 	worker.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)
 
@@ -644,7 +652,7 @@ func (w *worker) resultLoop() {
 
 // makeEnv creates a new environment for the sealing block.
 func (w *worker) makeEnv(parent *types.Header, header *types.Header, coinbase common.Address,
-	prevEnv *environment, witness bool) (*environment, error) {
+    prevEnv *environment, witness bool) (*environment, error) {
 	// Retrieve the parent state to execute on top and start a prefetcher for
 	// the miner to speed block sealing up a bit
 	state, err := w.chain.StateWithCacheAt(parent.Root)
@@ -666,17 +674,20 @@ func (w *worker) makeEnv(parent *types.Header, header *types.Header, coinbase co
 	}
 
 	// Note the passed coinbase may be different with header.Coinbase.
-	env := &environment{
-		signer:   types.MakeSigner(w.chainConfig, header.Number, header.Time),
-		state:    state,
-		coinbase: coinbase,
-		header:   header,
-		witness:  state.Witness(),
-		evm:      vm.NewEVM(core.NewEVMBlockContext(header, w.chain, &coinbase), state, w.chainConfig, vm.Config{}),
-	}
+    env := &environment{
+        signer:   types.MakeSigner(w.chainConfig, header.Number, header.Time),
+        state:    state,
+        coinbase: coinbase,
+        header:   header,
+        witness:  state.Witness(),
+        evm:      vm.NewEVM(core.NewEVMBlockContext(header, w.chain, &coinbase), state, w.chainConfig, vm.Config{}),
+        profit:   big.NewInt(0),
+        UnRevertible: make([]common.Hash, 0),
+    }
 	// Keep track of transactions which return errors so they can be removed
-	env.tcount = 0
-	return env, nil
+    env.tcount = 0
+    env.size = uint32(env.header.Size())
+    return env, nil
 }
 
 func (w *worker) commitTransaction(env *environment, tx *types.Transaction, receiptProcessors ...core.ReceiptProcessor) ([]*types.Log, error) {

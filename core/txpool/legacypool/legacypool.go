@@ -1011,7 +1011,7 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 // This method is used to add transactions from the p2p network and does not wait for pool
 // reorganization and internal event propagation.
 func (pool *LegacyPool) addRemotes(txs []*types.Transaction) []error {
-	return pool.Add(txs, false)
+    return pool.Add(txs, false, false)
 }
 
 // addRemote enqueues a single transaction into the pool if it is valid. This is a convenience
@@ -1022,19 +1022,19 @@ func (pool *LegacyPool) addRemote(tx *types.Transaction) error {
 
 // addRemotesSync is like addRemotes, but waits for pool reorganization. Tests use this method.
 func (pool *LegacyPool) addRemotesSync(txs []*types.Transaction) []error {
-	return pool.Add(txs, true)
+    return pool.Add(txs, true, false)
 }
 
 // This is like addRemotes with a single transaction, but waits for pool reorganization. Tests use this method.
 func (pool *LegacyPool) addRemoteSync(tx *types.Transaction) error {
-	return pool.Add([]*types.Transaction{tx}, true)[0]
+    return pool.Add([]*types.Transaction{tx}, true, false)[0]
 }
 
 // Add enqueues a batch of transactions into the pool if they are valid.
 //
 // Note, if sync is set the method will block until all internal maintenance
 // related to the add is finished. Only use this during tests for determinism.
-func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
+func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool, private bool) []error {
 	// Filter out known ones without obtaining the pool lock or recovering signatures
 	var (
 		errs = make([]error, len(txs))
@@ -1164,8 +1164,12 @@ func (pool *LegacyPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 // Has returns an indicator whether txpool has a transaction cached with the
 // given hash.
 func (pool *LegacyPool) Has(hash common.Hash) bool {
-	return pool.all.Get(hash) != nil
+    return pool.all.Get(hash) != nil
 }
+
+// IsPrivateTxHash returns true if the transaction is marked as private in this pool.
+// Legacy pool does not maintain private markers; always returns false.
+func (pool *LegacyPool) IsPrivateTxHash(hash common.Hash) bool { return false }
 
 // removeTx removes a single transaction from the queue, moving all subsequent
 // transactions back to the future queue.
@@ -2026,7 +2030,7 @@ func (pool *LegacyPool) transferTransactions() {
 		return
 	}
 
-	pool.Add(txs, false)
+    pool.Add(txs, false, false)
 }
 
 func (pool *LegacyPool) PrintTxStats() {

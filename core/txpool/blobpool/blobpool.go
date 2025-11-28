@@ -1293,6 +1293,9 @@ func (p *BlobPool) Get(hash common.Hash) *types.Transaction {
 	return item
 }
 
+// IsPrivateTxHash returns false for blob pool; privacy is handled at txpool level.
+func (p *BlobPool) IsPrivateTxHash(hash common.Hash) bool { return false }
+
 // GetRLP returns a RLP-encoded transaction if it is contained in the pool.
 func (p *BlobPool) GetRLP(hash common.Hash) []byte {
 	return p.getRLP(hash)
@@ -1368,7 +1371,7 @@ func (p *BlobPool) AvailableBlobs(vhashes []common.Hash) int {
 //
 // Note, if sync is set the method will block until all internal maintenance
 // related to the add is finished. Only use this during tests for determinism.
-func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
+func (p *BlobPool) Add(txs []*types.Transaction, sync bool, private bool) []error {
 	var (
 		adds = make([]*types.Transaction, 0, len(txs))
 		errs = make([]error, len(txs))

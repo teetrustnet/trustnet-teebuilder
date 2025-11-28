@@ -493,6 +493,9 @@ func (b testBackend) RPCEVMTimeout() time.Duration             { return time.Sec
 func (b testBackend) RPCTxFeeCap() float64                     { return 0 }
 func (b testBackend) UnprotectedAllowed() bool                 { return false }
 func (b testBackend) PrivateTxMode() bool                      { return false }
+func (b testBackend) SendPrivateTx(ctx context.Context, signedTx *types.Transaction) error {
+    return errors.New("private tx not supported in test backend")
+}
 func (b testBackend) SetHead(number uint64)                    {}
 func (b testBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
 	if number == rpc.LatestBlockNumber {
@@ -613,9 +616,7 @@ func (b testBackend) SubscribeFinalizedHeaderEvent(ch chan<- core.FinalizedHeade
 func (b testBackend) SubscribeNewVoteEvent(ch chan<- core.NewVoteEvent) event.Subscription {
 	panic("implement me")
 }
-func (b testBackend) SendTx(ctx context.Context, signedTx *types.Transaction, private bool) error {
-	panic("implement me")
-}
+func (b testBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error { return nil }
 func (b testBackend) SendBundle(ctx context.Context, bundle *types.Bundle) error {
 	panic("implement me")
 }

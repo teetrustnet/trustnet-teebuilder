@@ -51,6 +51,7 @@ import (
 type EthAPIBackend struct {
 	extRPCEnabled       bool
 	allowUnprotectedTxs bool
+	privateTxEnabled    bool
 	eth                 *Ethereum
 	gpo                 *gasprice.Oracle
 }
@@ -338,7 +339,7 @@ func (b *EthAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscri
 }
 
 func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
-	err := b.eth.txPool.Add([]*types.Transaction{signedTx}, false)[0]
+	err := b.eth.txPool.Add([]*types.Transaction{signedTx}, false, false)[0]
 
 	// If the local transaction tracker is not configured, returns whatever
 	// returned from the txpool.
@@ -357,6 +358,41 @@ func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction)
 	// Locally submitted transactions will be resubmitted later via the local tracker.
 	b.eth.localTxTracker.Track(signedTx)
 	return nil
+}
+
+func (b *EthAPIBackend) SendPrivateTx(ctx context.Context, signedTx *types.Transaction) error {
+	err := b.eth.txPool.Add([]*types.Transaction{signedTx}, false, true)[0]
+	if b.eth.localTxTracker == nil {
+		return err
+	}
+	if err != nil && !locals.IsTemporaryReject(err) {
+		return err
+	}
+	b.eth.localTxTracker.Track(signedTx)
+	return nil
+}
+
+func (b *EthAPIBackend) PrivateTxMode() bool { return b.privateTxEnabled }
+
+func (b *EthAPIBackend) nodePrivateTxMode() bool { return b.privateTxEnabled }
+
+func (b *EthAPIBackend) BundlePrice() *big.Int {
+	if b.eth.bundlePool == nil {
+		return big.NewInt(0)
+	}
+	return b.eth.bundlePool.MinPrice()
+}
+func (b *EthAPIBackend) SimulateGaslessBundle(bundle *types.Bundle) (*types.SimulateGaslessBundleResp, error) {
+	return b.eth.miner.SimulateGaslessBundle(bundle)
+}
+func (b *EthAPIBackend) SendBundle(ctx context.Context, bundle *types.Bundle) error {
+	if b.eth.bundlePool == nil {
+		return errors.New("bundle pool not initialized")
+	}
+	return b.eth.bundlePool.AddBundle(bundle)
+}
+func (b *EthAPIBackend) Bundles(ctx context.Context, fromBlock, toBlock int64) []*types.BundlesItem {
+	return b.eth.txPool.Bundles(fromBlock, toBlock)
 }
 
 func (b *EthAPIBackend) GetPoolTransactions() (types.Transactions, error) {

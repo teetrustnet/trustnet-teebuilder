@@ -21,9 +21,11 @@ import (
 	"fmt"
 	"maps"
 	"math/big"
+	"slices"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -320,7 +322,7 @@ func (p *TxPool) GetMetadata(hash common.Hash) *TxMetadata {
 //
 // Note, if sync is set the method will block until all internal maintenance
 // related to the add is finished. Only use this during tests for determinism.
-func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
+func (p *TxPool) Add(txs []*types.Transaction, sync bool, private bool) []error {
 	// Split the input transactions between the subpools. It shouldn't really
 	// happen that we receive merged batches, but better graceful than strange
 	// errors.
@@ -347,7 +349,7 @@ func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 	// back the errors into the original sort order.
 	errsets := make([][]error, len(p.subpools))
 	for i := 0; i < len(p.subpools); i++ {
-		errsets[i] = p.subpools[i].Add(txsets[i], sync)
+		errsets[i] = p.subpools[i].Add(txsets[i], sync, private)
 	}
 	errs := make([]error, len(txs))
 	for i, split := range splits {
@@ -361,6 +363,74 @@ func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 		errsets[split] = errsets[split][1:]
 	}
 	return errs
+}
+
+func (p *TxPool) PendingBundles(blockNumber uint64, blockTimestamp uint64) []*types.Bundle {
+	var ret []*types.Bundle
+	for _, sp := range p.subpools {
+		if bp, ok := sp.(BundleSubpool); ok {
+			bundles := bp.PendingBundles(blockNumber, blockTimestamp)
+			if len(bundles) > 0 {
+				ret = append(ret, bundles...)
+			}
+		}
+	}
+	return ret
+}
+
+func (p *TxPool) AllBundles() []*types.Bundle {
+	var ret []*types.Bundle
+	for _, sp := range p.subpools {
+		if bp, ok := sp.(BundleSubpool); ok {
+			bundles := bp.AllBundles()
+			if len(bundles) > 0 {
+				ret = append(ret, bundles...)
+			}
+		}
+	}
+	return ret
+}
+
+func (p *TxPool) PruneBundle(hash common.Hash) {
+	for _, sp := range p.subpools {
+		if bp, ok := sp.(BundleSubpool); ok {
+			bp.PruneBundle(hash)
+		}
+	}
+}
+
+func (p *TxPool) Bundles(fromBlock, toBlock int64) []*types.BundlesItem {
+	agg := make(map[int64][][]common.Hash)
+	for _, sp := range p.subpools {
+		if bp, ok := sp.(BundleSubpool); ok {
+			m := bp.BundleMetrics(fromBlock, toBlock)
+			for k, v := range m {
+				agg[k] = append(agg[k], v...)
+			}
+		}
+	}
+	if len(agg) == 0 {
+		return nil
+	}
+	keys := make([]int64, 0, len(agg))
+	for k := range agg {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	out := make([]*types.BundlesItem, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, &types.BundlesItem{ReceivedBlock: hexutil.Uint64(uint64(k)), Bundles: agg[k]})
+	}
+	return out
+}
+
+func (p *TxPool) IsPrivateTxHash(hash common.Hash) bool {
+	for _, sp := range p.subpools {
+		if sp.IsPrivateTxHash(hash) {
+			return true
+		}
+	}
+	return false
 }
 
 // Pending retrieves all currently processable transactions, grouped by origin
