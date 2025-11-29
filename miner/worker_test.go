@@ -111,6 +111,7 @@ type testWorkerBackend struct {
 	txPool  *txpool.TxPool
 	chain   *core.BlockChain
 	genesis *core.Genesis
+	accman  *accounts.Manager
 }
 
 func newTestWorkerBackend(t *testing.T, chainConfig *params.ChainConfig, engine consensus.Engine, db ethdb.Database, n int) *testWorkerBackend {
@@ -141,11 +142,13 @@ func newTestWorkerBackend(t *testing.T, chainConfig *params.ChainConfig, engine 
 		chain:   chain,
 		txPool:  txpool,
 		genesis: gspec,
+		accman:  accounts.NewManager(&accounts.Config{InsecureUnlockAllowed: true}),
 	}
 }
 
-func (b *testWorkerBackend) BlockChain() *core.BlockChain { return b.chain }
-func (b *testWorkerBackend) TxPool() *txpool.TxPool       { return b.txPool }
+func (b *testWorkerBackend) BlockChain() *core.BlockChain      { return b.chain }
+func (b *testWorkerBackend) TxPool() *txpool.TxPool            { return b.txPool }
+func (b *testWorkerBackend) AccountManager() *accounts.Manager { return b.accman }
 
 func (b *testWorkerBackend) newRandomTx(creation bool) *types.Transaction {
 	var tx *types.Transaction
@@ -160,7 +163,7 @@ func (b *testWorkerBackend) newRandomTx(creation bool) *types.Transaction {
 
 func newTestWorker(t *testing.T, chainConfig *params.ChainConfig, engine consensus.Engine, db ethdb.Database, blocks int) (*worker, *testWorkerBackend) {
 	backend := newTestWorkerBackend(t, chainConfig, engine, db, blocks)
-	backend.txPool.Add(pendingTxs, true)
+	backend.txPool.Add(pendingTxs, true, false)
 	w := newWorker(testConfig, engine, backend, new(event.TypeMux))
 	w.setEtherbase(testBankAddress)
 	return w, backend
@@ -195,8 +198,8 @@ func TestGenerateAndImportBlock(t *testing.T) {
 	w.start()
 
 	for i := 0; i < 5; i++ {
-		b.txPool.Add([]*types.Transaction{b.newRandomTx(true)}, true)
-		b.txPool.Add([]*types.Transaction{b.newRandomTx(false)}, true)
+		b.txPool.Add([]*types.Transaction{b.newRandomTx(true)}, true, false)
+		b.txPool.Add([]*types.Transaction{b.newRandomTx(false)}, true, false)
 
 		select {
 		case ev := <-sub.Chan():
