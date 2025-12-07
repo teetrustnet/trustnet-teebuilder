@@ -66,18 +66,23 @@ type Miner struct {
 }
 
 func New(eth Backend, config *minerconfig.Config, mux *event.TypeMux, engine consensus.Engine) *Miner {
-	miner := &Miner{
-		mux:     mux,
-		eth:     eth,
-		engine:  engine,
-		exitCh:  make(chan struct{}),
-		startCh: make(chan struct{}),
-		stopCh:  make(chan struct{}),
-		worker:  newWorker(config, engine, eth, mux),
-	}
+    miner := &Miner{
+        mux:     mux,
+        eth:     eth,
+        engine:  engine,
+        exitCh:  make(chan struct{}),
+        startCh: make(chan struct{}),
+        stopCh:  make(chan struct{}),
+        worker:  newWorker(config, engine, eth, mux),
+    }
 
-	miner.bidSimulator = newBidSimulator(&config.Mev, config.DelayLeftOver, config.GasPrice, eth, eth.BlockChain().Config(), engine, miner.worker)
-	miner.worker.setBestBidFetcher(miner.bidSimulator)
+    miner.bidSimulator = newBidSimulator(&config.Mev, config.DelayLeftOver, config.GasPrice, eth, eth.BlockChain().Config(), engine, miner.worker)
+    miner.worker.setBestBidFetcher(miner.bidSimulator)
+
+    // initialize bidder in builder mode
+    if config.Mev.BuilderEnabled != nil && *config.Mev.BuilderEnabled {
+        miner.worker.bidder = NewBidder(&config.Mev, *config.DelayLeftOver, engine, eth)
+    }
 
 	miner.wg.Add(1)
 	go miner.update()
@@ -168,8 +173,11 @@ func (miner *Miner) Stop() {
 }
 
 func (miner *Miner) Close() {
-	close(miner.exitCh)
-	miner.wg.Wait()
+    close(miner.exitCh)
+    miner.wg.Wait()
+    if miner.worker != nil && miner.worker.bidder != nil {
+        miner.worker.bidder.exit()
+    }
 }
 
 func (miner *Miner) Mining() bool {

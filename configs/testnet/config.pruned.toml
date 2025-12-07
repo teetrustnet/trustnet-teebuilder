@@ -1,0 +1,101 @@
+[Eth]
+NetworkId = 97
+SyncMode = "snap"
+NoPruning = false
+NoPrefetch = false
+DatabaseCache = 8192
+TrieCleanCache = 2048
+TrieDirtyCache = 2048
+TriesInMemory = 512
+TrieTimeout = 3600000000000
+EnablePreimageRecording = false
+
+[Eth.Miner.Mev]
+BuilderEnabled = true
+BuilderAccount = "0x00011b01928e3c1b361dd2ff4b07ee361de70307"
+
+[[Eth.Miner.Mev.Validators]]
+Address = "0x53387F3321FD69d1E030BB921230dFb188826AFF"
+URL = "https://bsc-testnet-fuji.bnbchain.org"
+
+[[Eth.Miner.Mev.Validators]]
+Address = "0x08265dA01E1A65d62b903c7B34c08cB389bF3D99"
+URL = "https://bsc-testnet-ararat.bnbchain.org"
+
+[[Eth.Miner.Mev.Validators]]
+Address = "0x1a3d9D7A717D64e6088aC937d5aAcDD3E20ca963"
+URL = "https://bsc-testnet-elbrus.bnbchain.org"
+
+[[Eth.Miner.Mev.Validators]]
+Address = "0xd447b49CD040D20BC21e49ffEa6487F5638e4346"
+URL = "https://bsc-testnet-everest.bnbchain.org"
+
+[[Eth.Miner.Mev.Validators]]
+Address = "0x7f5f2cF1aec83bF0c74DF566a41aa7ed65EA84Ea"
+URL = "https://bsc-testnet-kita.bnbchain.org"
+
+[[Eth.Miner.Mev.Validators]]
+Address = "0x76D76ee8823dE52A1A431884c2ca930C5e72bff3"
+URL = "https://bsc-testnet-seoraksan.bnbchain.org"
+
+[Eth.Miner]
+GasFloor = 30000000
+GasCeil = 70000000
+GasPrice = 1000000000
+Recommit = 10000000000
+
+[Eth.TxPool]
+Locals = []
+NoLocals = true
+Journal = "transactions.rlp"
+Rejournal = 3600000000000
+PriceLimit = 1000000000
+PriceBump = 10
+AccountSlots = 16
+GlobalSlots = 4096
+AccountQueue = 64
+GlobalQueue = 1024
+Lifetime = 10800000000000
+
+[Eth.GPO]
+Blocks = 20
+Percentile = 60
+OracleThreshold = 1000
+
+[Node]
+DataDir = "data"
+IPCPath = "geth.ipc"
+HTTPHost = "0.0.0.0"
+NoUSB = true
+InsecureUnlockAllowed = false
+HTTPPort = 8575
+HTTPVirtualHosts = ["*"]
+HTTPModules = ["debug", "eth", "net", "web3", "txpool", "parlia", "mev"]
+WSHost = "0.0.0.0"
+WSPort = 8576
+WSModules = ["net", "web3", "eth"]
+PrivateTxMode = true
+
+[Node.P2P]
+MaxPeers = 50
+NoDiscovery = false
+TrustedNodes = []
+StaticNodes = [
+"enode://0637d1e62026e0c8685b1db0ca1c767c78c95c3fab64abc468d1a64b12ca4b530b46b8f80c915aec96f74f7ffc5999e8ad6d1484476f420f0c10e3d42361914b@52.199.214.252:30311",
+"enode://df1e8eb59e42cad3c4551b2a53e31a7e55a2fdde1287babd1e94b0836550b489ba16c40932e4dacb16cba346bd442c432265a299c4aca63ee7bb0f832b9f45eb@52.51.80.128:30311",
+"enode://dbcc5ec23bdf89243688321e8cfa8d80e17edce093206bcc6df998d8148385767cae3058a1c1e20c93c3b8e07962bc7a321deab0aa46c106283f1220f12c220a@3.209.122.123:30311",
+"enode://665cf77ca26a8421cfe61a52ac312958308d4912e78ce8e0f61d6902e4494d4cc38f9b0dd1b23a427a7a5734e27e5d9729231426b06bb9c73b56a142f83f6b68@52.72.123.113:30311",
+"enode://3e6915db1284be5c2bb3895c623174c28e019b14358b924c3b2ab874ff783dc41d35a87c956637958722790fedfd060c6256be19ef6838459ec031b7874f67c7@23.227.222.185:41111",
+]
+EnableMsgEvents = false
+
+[Node.HTTPTimeouts]
+ReadTimeout = 30000000000
+WriteTimeout = 30000000000
+IdleTimeout = 120000000000
+
+[Node.LogConfig]
+FileRoot = "./logs"
+FilePath = "bsc.log"
+MaxBytesSize = 10485760
+Level = "info"

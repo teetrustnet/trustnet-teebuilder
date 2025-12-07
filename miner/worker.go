@@ -177,8 +177,9 @@ type bidFetcher interface {
 // worker is the main object which takes care of submitting new work to consensus engine
 // and gathering the sealing result.
 type worker struct {
-	bidFetcher  bidFetcher
-	prefetcher  core.Prefetcher
+    bidFetcher  bidFetcher
+    bidder      *Bidder
+    prefetcher  core.Prefetcher
 	config      *minerconfig.Config
 	chainConfig *params.ChainConfig
 	engine      consensus.Engine
@@ -1194,15 +1195,35 @@ func (w *worker) commitWork(interruptCh chan int32, timestamp int64) {
 	}
 	start := time.Now()
 
-	// Set the coinbase if the worker is running or it's required
-	var coinbase common.Address
-	if w.isRunning() {
-		coinbase = w.etherbase()
-		if coinbase == (common.Address{}) {
-			log.Error("Refusing to mine without etherbase")
-			return
-		}
-	}
+    // Set the coinbase depending on mode
+    var coinbase common.Address
+    if w.isRunning() {
+        if w.bidder != nil && w.bidder.enabled() {
+            var err error
+            coinbase, err = w.engine.NextInTurnValidator(w.chain, w.chain.CurrentBlock())
+            if err != nil {
+                log.Error("Failed to get next in-turn validator", "err", err)
+                return
+            }
+            // Only proceed if this validator is registered for bidding
+            if !w.bidder.isRegistered(coinbase) {
+                log.Info("Validator not integrated for builder mode", "validator", coinbase)
+                return
+            }
+            if posa, ok := w.engine.(consensus.PoSA); ok {
+                posa.SetValidator(coinbase)
+            } else {
+                log.Warn("Consensus engine does not support validator setting")
+                return
+            }
+        } else {
+            coinbase = w.etherbase()
+            if coinbase == (common.Address{}) {
+                log.Error("Refusing to mine without etherbase")
+                return
+            }
+        }
+    }
 
 	stopTimer := time.NewTimer(0)
 	defer stopTimer.Stop()
@@ -1288,9 +1309,9 @@ LOOP:
 
 		// Fill pending transactions from the txpool into the block.
 		fillStart := time.Now()
-		err = w.fillTransactions(interruptCh, work, stopTimer, nil)
+        err = w.fillTransactionsAndBundles(interruptCh, work, stopTimer)
 		fillDuration := time.Since(fillStart)
-		switch {
+        switch {
 		case errors.Is(err, errBlockInterruptedByNewHead):
 			// work.discard()
 			log.Debug("commitWork abort", "err", err)
@@ -1303,13 +1324,17 @@ LOOP:
 			// break the loop to get the best work
 			log.Debug("commitWork finish", "reason", err)
 			break LOOP
-		}
+        }
 
-		if interruptCh == nil || stopTimer == nil {
-			// it is single commit work, no need to try several time.
-			log.Info("commitWork interruptCh or stopTimer is nil")
-			break
-		}
+        if w.bidder != nil {
+            w.bidder.newWork(work)
+        }
+
+        if interruptCh == nil || stopTimer == nil {
+            // it is single commit work, no need to try several time.
+            log.Info("commitWork interruptCh or stopTimer is nil")
+            break
+        }
 
 		newTxsNum := 0
 		// stopTimer was the maximum delay for each fillTransactions
@@ -1433,7 +1458,11 @@ LOOP:
 		}
 	}
 
-	w.commit(bestWork, w.fullTaskHook, start)
+    // In builder mode, do not seal locally; only send bid to validators
+    if w.bidder != nil && w.bidder.enabled() {
+        return
+    }
+    w.commit(bestWork, w.fullTaskHook, start)
 
 	// Swap out the old work with the new one, terminating any leftover
 	// prefetcher processes in the mean time and starting a new one.

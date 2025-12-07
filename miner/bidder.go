@@ -47,6 +47,8 @@ type Bidder struct {
 	wg sync.WaitGroup
 
 	wallet accounts.Wallet
+
+	builderAddr common.Address
 }
 
 func NewBidder(config *minerconfig.MevConfig, delayLeftOver time.Duration, engine consensus.Engine, eth Backend) *Bidder {
@@ -61,23 +63,42 @@ func NewBidder(config *minerconfig.MevConfig, delayLeftOver time.Duration, engin
 		exitCh:        make(chan struct{}),
 	}
 
-	if config.Enabled == nil || !*config.Enabled {
+	if config.BuilderEnabled == nil || !*config.BuilderEnabled {
+		log.Info("Bidder: builder mode disabled")
 		return b
 	}
 
-	// use miner etherbase as builder account
-	// fallback to etherbase configured in minerconfig
-	wallet, err := eth.AccountManager().Find(accounts.Account{Address: config.Builders[0].Address})
+	// use configured BuilderAccount; fallback to first Builders entry
+	builderAddr := config.BuilderAccount
+	if builderAddr == (common.Address{}) && len(config.Builders) > 0 {
+		builderAddr = config.Builders[0].Address
+	}
+	wallet, err := eth.AccountManager().Find(accounts.Account{Address: builderAddr})
 	if err != nil {
 		log.Crit("Bidder: failed to find builder account", "err", err)
 	}
 
 	b.wallet = wallet
+	b.builderAddr = builderAddr
 
-	// Validators registration is not configured in MevConfig in this codebase; skip
+	// register validators endpoints if provided
+	for _, v := range config.Validators {
+		b.validators[v.Address] = &validator{
+			Client: mustDialValidator(v.URL),
+			BidSimulationLeftOver: func() time.Duration {
+				if config.BidSimulationLeftOver != nil {
+					return *config.BidSimulationLeftOver
+				}
+				return b.delayLeftOver
+			}(),
+			GasCeil: b.chain.CurrentBlock().GasLimit,
+		}
+	}
 
 	if len(b.validators) == 0 {
 		log.Warn("Bidder: No valid validators")
+	} else {
+		log.Info("Bidder: initialized", "validators", len(b.validators))
 	}
 
 	b.wg.Add(2)
@@ -176,13 +197,16 @@ func (b *Bidder) unregister(validator common.Address) {
 
 func (b *Bidder) newWork(work *environment) {
 	if !b.enabled() {
+		log.Info("Bidder: newWork ignored, builder disabled")
 		return
 	}
 
-	if work.profit.Cmp(common.Big0) <= 0 {
+	if work.profit.Cmp(common.Big0) <= 0 && len(work.txs) == 0 {
+		log.Info("Bidder: newWork ignored, zero profit and no txs", "number", work.header.Number)
 		return
 	}
 
+	log.Info("Bidder: newWork accepted", "number", work.header.Number, "txs", len(work.txs), "profit", work.profit)
 	b.newBidCh <- work
 }
 
@@ -210,7 +234,19 @@ func (b *Bidder) bid(work *environment) {
 	}
 
 	if len(work.txs) > 0 {
-		log.Debug("Bidder: bidding start", "txcount", len(work.txs), "txHash", work.txs[0].Hash())
+		log.Info("Bidder: bidding start", "validator", work.coinbase, "txcount", len(work.txs), "firstTx", work.txs[0].Hash())
+	}
+
+	// precheck validator status
+	running, merr := cli.MevRunning(context.Background())
+	if merr == nil && !running {
+		log.Info("Bidder: validator mev not running", "validator", work.coinbase)
+		return
+	}
+	has, herr := cli.HasBuilder(context.Background(), b.builderAddr)
+	if herr == nil && !has {
+		log.Error("Bidder: builder not registered on validator", "validator", work.coinbase, "builder", b.builderAddr)
+		return
 	}
 
 	// construct bid from work
@@ -323,10 +359,8 @@ func (b *Bidder) signBid(bid *types.RawBid) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// use first builder address if available
-	addr := common.Address{}
-	if len(b.config.Builders) > 0 {
+	addr := b.builderAddr
+	if addr == (common.Address{}) && len(b.config.Builders) > 0 {
 		addr = b.config.Builders[0].Address
 	}
 	return b.wallet.SignData(accounts.Account{Address: addr}, accounts.MimetypeTextPlain, bz)
@@ -334,7 +368,7 @@ func (b *Bidder) signBid(bid *types.RawBid) ([]byte, error) {
 
 // enabled returns whether the bid is enabled
 func (b *Bidder) enabled() bool {
-	return b.config.Enabled != nil && *b.config.Enabled
+	return b.config.BuilderEnabled != nil && *b.config.BuilderEnabled
 }
 
 // get block interval for current block by using parent header
@@ -350,4 +384,14 @@ func (b *Bidder) getBlockInterval(parentHeader *types.Header) uint64 {
 		log.Debug("failed to get BlockInterval when bidBetterBefore")
 	}
 	return blockInterval
+}
+func mustDialValidator(url string) *validatorclient.Client {
+	if url == "" {
+		return nil
+	}
+	cli, err := validatorclient.DialOptions(context.Background(), url)
+	if err != nil {
+		log.Crit("Bidder: failed to dial validator", "url", url, "err", err)
+	}
+	return cli
 }

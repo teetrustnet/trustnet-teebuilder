@@ -11,7 +11,7 @@ import (
 
 // Client defines typed wrappers for the Ethereum RPC API.
 type Client struct {
-	c *rpc.Client
+    c *rpc.Client
 }
 
 // DialOptions creates a new RPC client for the given URL. You can supply any of the
@@ -26,14 +26,14 @@ func DialOptions(ctx context.Context, rawurl string, opts ...rpc.ClientOption) (
 
 // newClient creates a client that uses the given RPC client.
 func newClient(c *rpc.Client) *Client {
-	return &Client{c}
+    return &Client{c}
 }
 
 // MevRunning returns whether MEV is running
 func (ec *Client) MevRunning(ctx context.Context) (bool, error) {
-	var result bool
-	err := ec.c.CallContext(ctx, &result, "mev_running")
-	return result, err
+    var result bool
+    err := ec.c.CallContext(ctx, &result, "mev_running")
+    return result, err
 }
 
 // SendBid sends a bid
@@ -64,4 +64,10 @@ func (ec *Client) MevParams(ctx context.Context) (*types.MevParams, error) {
 		return nil, err
 	}
 	return &params, err
+}
+// HasBuilder returns whether the builder address is registered on validator
+func (ec *Client) HasBuilder(ctx context.Context, builder common.Address) (bool, error) {
+    var result bool
+    err := ec.c.CallContext(ctx, &result, "mev_hasBuilder", builder)
+    return result, err
 }

@@ -47,6 +47,7 @@ var (
 	defaultBuilderFeeCeil      = "0"
 	defaultValidatorCommission = uint64(100)
 	defaultMaxBidsPerBuilder   = uint32(2) // Simple strategy: send one bid early, another near deadline
+	defaultBuilderEnabled      = false
 )
 
 // Config is the configuration parameters of mining.
@@ -89,16 +90,24 @@ type BuilderConfig struct {
 	URL     string
 }
 
+type ValidatorConfig struct {
+	Address common.Address
+	URL     string
+}
+
 type MevConfig struct {
-	Enabled               *bool           `toml:",omitempty"` // Whether to enable Mev or not
-	GreedyMergeTx         *bool           `toml:",omitempty"` // Whether to merge local transactions to the bid
-	BuilderFeeCeil        *string         `toml:",omitempty"` // The maximum builder fee of a bid
-	SentryURL             string          // The url of Mev sentry
-	Builders              []BuilderConfig // The list of builders
-	ValidatorCommission   *uint64         `toml:",omitempty"` // 100 means the validator claims 1% from block reward
-	BidSimulationLeftOver *time.Duration  `toml:",omitempty"`
-	NoInterruptLeftOver   *time.Duration  `toml:",omitempty"`
-	MaxBidsPerBuilder     *uint32         `toml:",omitempty"` // Maximum number of bids allowed per builder per block
+	Enabled               *bool             `toml:",omitempty"` // Whether to enable Mev or not
+	GreedyMergeTx         *bool             `toml:",omitempty"` // Whether to merge local transactions to the bid
+	BuilderFeeCeil        *string           `toml:",omitempty"` // The maximum builder fee of a bid
+	SentryURL             string            // The url of Mev sentry
+	Builders              []BuilderConfig   // The list of builders
+	BuilderEnabled        *bool             `toml:",omitempty"` // Whether to run in builder mode
+	BuilderAccount        common.Address    // Builder account used for signing bids
+	Validators            []ValidatorConfig // Validators list for builder to send bids
+	ValidatorCommission   *uint64           `toml:",omitempty"` // 100 means the validator claims 1% from block reward
+	BidSimulationLeftOver *time.Duration    `toml:",omitempty"`
+	NoInterruptLeftOver   *time.Duration    `toml:",omitempty"`
+	MaxBidsPerBuilder     *uint32           `toml:",omitempty"` // Maximum number of bids allowed per builder per block
 }
 
 var DefaultMevConfig = MevConfig{
@@ -107,6 +116,9 @@ var DefaultMevConfig = MevConfig{
 	BuilderFeeCeil:        &defaultBuilderFeeCeil,
 	SentryURL:             "",
 	Builders:              nil,
+	BuilderEnabled:        &defaultBuilderEnabled,
+	BuilderAccount:        common.Address{},
+	Validators:            nil,
 	ValidatorCommission:   &defaultValidatorCommission,
 	BidSimulationLeftOver: &defaultBidSimulationLeftOver,
 	NoInterruptLeftOver:   &defaultNoInterruptLeftOver,
@@ -137,6 +149,10 @@ func ApplyDefaultMinerConfig(cfg *Config) {
 	if cfg.Mev.Enabled == nil {
 		cfg.Mev.Enabled = &defaultMevEnabled
 		log.Info("ApplyDefaultMinerConfig", "Mev.Enabled", *cfg.Mev.Enabled)
+	}
+	if cfg.Mev.BuilderEnabled == nil {
+		cfg.Mev.BuilderEnabled = &defaultBuilderEnabled
+		log.Info("ApplyDefaultMinerConfig", "Mev.BuilderEnabled", *cfg.Mev.BuilderEnabled)
 	}
 	if cfg.Mev.BuilderFeeCeil == nil {
 		cfg.Mev.BuilderFeeCeil = &defaultBuilderFeeCeil
