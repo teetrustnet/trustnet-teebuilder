@@ -272,6 +272,8 @@ type LegacyPool struct {
 	initDoneCh      chan struct{}  // is closed once the pool is initialized (for tests)
 
 	changesSinceReorg int // A counter for how many drops we've performed in-between reorg.
+
+	privateSet map[common.Hash]struct{}
 }
 
 type txpoolResetRequest struct {
@@ -301,6 +303,7 @@ func New(config Config, chain BlockChain) *LegacyPool {
 		reorgShutdownCh: make(chan struct{}),
 		initDoneCh:      make(chan struct{}),
 		localBufferPool: NewTxOverflowPoolHeap(config.OverflowPoolSlots),
+		privateSet:      make(map[common.Hash]struct{}),
 	}
 	pool.priced = newPricedList(pool.all)
 
@@ -1058,6 +1061,9 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool, private bool) [
 		}
 		// Accumulate all unknown transactions for deeper processing
 		news = append(news, tx)
+		if private {
+			pool.privateSet[tx.Hash()] = struct{}{}
+		}
 	}
 	if len(news) == 0 {
 		return errs
@@ -1169,7 +1175,10 @@ func (pool *LegacyPool) Has(hash common.Hash) bool {
 
 // IsPrivateTxHash returns true if the transaction is marked as private in this pool.
 // Legacy pool does not maintain private markers; always returns false.
-func (pool *LegacyPool) IsPrivateTxHash(hash common.Hash) bool { return false }
+func (pool *LegacyPool) IsPrivateTxHash(hash common.Hash) bool {
+    _, ok := pool.privateSet[hash]
+    return ok
+}
 
 // removeTx removes a single transaction from the queue, moving all subsequent
 // transactions back to the future queue.
@@ -1204,6 +1213,7 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 	}
 	// Remove it from the list of known transactions
 	pool.all.Remove(hash)
+	delete(pool.privateSet, hash)
 	if outofbound {
 		pool.priced.Removed(1)
 	}

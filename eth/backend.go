@@ -455,9 +455,13 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	eth.dropper = newDropper(eth.p2pServer.MaxDialedConns(), eth.p2pServer.MaxInboundConns())
 
-	eth.miner = miner.New(eth, &config.Miner, eth.EventMux(), eth.engine)
-	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
-	eth.miner.SetPrioAddresses(config.TxPool.Locals)
+    eth.miner = miner.New(eth, &config.Miner, eth.EventMux(), eth.engine)
+    eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
+    eth.miner.SetPrioAddresses(config.TxPool.Locals)
+
+    if eth.bundlePool != nil {
+        eth.bundlePool.SetBundleSimulator(eth.miner)
+    }
 
 	// Create voteManager instance
 	if posa, ok := eth.engine.(consensus.PoSA); ok {

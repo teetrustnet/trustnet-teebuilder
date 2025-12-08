@@ -972,8 +972,11 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 		hasher = crypto.NewKeccakState()
 		hash   = make([]byte, 32)
 	)
-	for _, tx := range txs {
-		var maybeDirect bool
+    for _, tx := range txs {
+        if h.txpool.IsPrivateTxHash(tx.Hash()) {
+            continue
+        }
+        var maybeDirect bool
 		switch {
 		case tx.Type() == types.BlobTxType:
 			blobTxs++
@@ -1026,10 +1029,13 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 // ReannounceTransactions will announce a batch of local pending transactions
 // to a square root of all peers.
 func (h *handler) ReannounceTransactions(txs types.Transactions) {
-	hashes := make([]common.Hash, 0, txs.Len())
-	for _, tx := range txs {
-		hashes = append(hashes, tx.Hash())
-	}
+    hashes := make([]common.Hash, 0, txs.Len())
+    for _, tx := range txs {
+        if h.txpool.IsPrivateTxHash(tx.Hash()) {
+            continue
+        }
+        hashes = append(hashes, tx.Hash())
+    }
 
 	// Announce transactions hash to a batch of peers
 	peersCount := uint(math.Sqrt(float64(h.peers.len())))
