@@ -737,7 +737,7 @@ func sendTransactionConditional(ec *ethclient.Client) error {
 	root := common.HexToHash("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 	return ec.SendTransactionConditional(context.Background(), tx, types.TransactionOpts{
 		KnownAccounts: map[common.Address]types.AccountStorage{
-			testAddr: types.AccountStorage{
+			testAddr: {
 				StorageRoot: &root,
 			},
 		},

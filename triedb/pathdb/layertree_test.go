@@ -56,9 +56,9 @@ func TestLayerCap(t *testing.T) {
 			layers: 2,
 			base:   common.Hash{0x2},
 			snapshot: map[common.Hash]struct{}{
-				common.Hash{0x2}: {},
-				common.Hash{0x3}: {},
-				common.Hash{0x4}: {},
+				{0x2}: {},
+				{0x3}: {},
+				{0x4}: {},
 			},
 		},
 		{
@@ -77,8 +77,8 @@ func TestLayerCap(t *testing.T) {
 			layers: 1,
 			base:   common.Hash{0x3},
 			snapshot: map[common.Hash]struct{}{
-				common.Hash{0x3}: {},
-				common.Hash{0x4}: {},
+				{0x3}: {},
+				{0x4}: {},
 			},
 		},
 		{
@@ -97,7 +97,7 @@ func TestLayerCap(t *testing.T) {
 			layers: 0,
 			base:   common.Hash{0x4},
 			snapshot: map[common.Hash]struct{}{
-				common.Hash{0x4}: {},
+				{0x4}: {},
 			},
 		},
 		{
@@ -120,9 +120,9 @@ func TestLayerCap(t *testing.T) {
 			layers: 2,
 			base:   common.Hash{0x2a},
 			snapshot: map[common.Hash]struct{}{
-				common.Hash{0x4a}: {},
-				common.Hash{0x3a}: {},
-				common.Hash{0x2a}: {},
+				{0x4a}: {},
+				{0x3a}: {},
+				{0x2a}: {},
 			},
 		},
 		{
@@ -145,8 +145,8 @@ func TestLayerCap(t *testing.T) {
 			layers: 1,
 			base:   common.Hash{0x3a},
 			snapshot: map[common.Hash]struct{}{
-				common.Hash{0x4a}: {},
-				common.Hash{0x3a}: {},
+				{0x4a}: {},
+				{0x3a}: {},
 			},
 		},
 		{
@@ -169,11 +169,11 @@ func TestLayerCap(t *testing.T) {
 			layers: 2,
 			base:   common.Hash{0x2},
 			snapshot: map[common.Hash]struct{}{
-				common.Hash{0x4a}: {},
-				common.Hash{0x3a}: {},
-				common.Hash{0x4b}: {},
-				common.Hash{0x3b}: {},
-				common.Hash{0x2}:  {},
+				{0x4a}: {},
+				{0x3a}: {},
+				{0x4b}: {},
+				{0x3b}: {},
+				{0x2}:  {},
 			},
 		},
 	}
@@ -262,7 +262,7 @@ func TestDescendant(t *testing.T) {
 				return tr
 			},
 			snapshotA: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x1}: {
+				{0x1}: {
 					common.Hash{0x2}: {},
 				},
 			},
@@ -272,11 +272,11 @@ func TestDescendant(t *testing.T) {
 				tr.add(common.Hash{0x3}, common.Hash{0x2}, 2, trienode.NewMergedNodeSet(), NewStateSetWithOrigin(nil, nil, nil, nil, false))
 			},
 			snapshotB: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x1}: {
+				{0x1}: {
 					common.Hash{0x2}: {},
 					common.Hash{0x3}: {},
 				},
-				common.Hash{0x2}: {
+				{0x2}: {
 					common.Hash{0x3}: {},
 				},
 			},
@@ -292,16 +292,16 @@ func TestDescendant(t *testing.T) {
 				return tr
 			},
 			snapshotA: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x1}: {
+				{0x1}: {
 					common.Hash{0x2}: {},
 					common.Hash{0x3}: {},
 					common.Hash{0x4}: {},
 				},
-				common.Hash{0x2}: {
+				{0x2}: {
 					common.Hash{0x3}: {},
 					common.Hash{0x4}: {},
 				},
-				common.Hash{0x3}: {
+				{0x3}: {
 					common.Hash{0x4}: {},
 				},
 			},
@@ -311,11 +311,11 @@ func TestDescendant(t *testing.T) {
 				tr.cap(common.Hash{0x4}, 2)
 			},
 			snapshotB: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x2}: {
+				{0x2}: {
 					common.Hash{0x3}: {},
 					common.Hash{0x4}: {},
 				},
-				common.Hash{0x3}: {
+				{0x3}: {
 					common.Hash{0x4}: {},
 				},
 			},
@@ -331,16 +331,16 @@ func TestDescendant(t *testing.T) {
 				return tr
 			},
 			snapshotA: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x1}: {
+				{0x1}: {
 					common.Hash{0x2}: {},
 					common.Hash{0x3}: {},
 					common.Hash{0x4}: {},
 				},
-				common.Hash{0x2}: {
+				{0x2}: {
 					common.Hash{0x3}: {},
 					common.Hash{0x4}: {},
 				},
-				common.Hash{0x3}: {
+				{0x3}: {
 					common.Hash{0x4}: {},
 				},
 			},
@@ -350,7 +350,7 @@ func TestDescendant(t *testing.T) {
 				tr.cap(common.Hash{0x4}, 1)
 			},
 			snapshotB: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x3}: {
+				{0x3}: {
 					common.Hash{0x4}: {},
 				},
 			},
@@ -366,16 +366,16 @@ func TestDescendant(t *testing.T) {
 				return tr
 			},
 			snapshotA: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x1}: {
+				{0x1}: {
 					common.Hash{0x2}: {},
 					common.Hash{0x3}: {},
 					common.Hash{0x4}: {},
 				},
-				common.Hash{0x2}: {
+				{0x2}: {
 					common.Hash{0x3}: {},
 					common.Hash{0x4}: {},
 				},
-				common.Hash{0x3}: {
+				{0x3}: {
 					common.Hash{0x4}: {},
 				},
 			},
@@ -401,7 +401,7 @@ func TestDescendant(t *testing.T) {
 				return tr
 			},
 			snapshotA: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x1}: {
+				{0x1}: {
 					common.Hash{0x2a}: {},
 					common.Hash{0x3a}: {},
 					common.Hash{0x4a}: {},
@@ -409,18 +409,18 @@ func TestDescendant(t *testing.T) {
 					common.Hash{0x3b}: {},
 					common.Hash{0x4b}: {},
 				},
-				common.Hash{0x2a}: {
+				{0x2a}: {
 					common.Hash{0x3a}: {},
 					common.Hash{0x4a}: {},
 				},
-				common.Hash{0x3a}: {
+				{0x3a}: {
 					common.Hash{0x4a}: {},
 				},
-				common.Hash{0x2b}: {
+				{0x2b}: {
 					common.Hash{0x3b}: {},
 					common.Hash{0x4b}: {},
 				},
-				common.Hash{0x3b}: {
+				{0x3b}: {
 					common.Hash{0x4b}: {},
 				},
 			},
@@ -430,11 +430,11 @@ func TestDescendant(t *testing.T) {
 				tr.cap(common.Hash{0x4a}, 2)
 			},
 			snapshotB: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x2a}: {
+				{0x2a}: {
 					common.Hash{0x3a}: {},
 					common.Hash{0x4a}: {},
 				},
-				common.Hash{0x3a}: {
+				{0x3a}: {
 					common.Hash{0x4a}: {},
 				},
 			},
@@ -454,7 +454,7 @@ func TestDescendant(t *testing.T) {
 				return tr
 			},
 			snapshotA: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x1}: {
+				{0x1}: {
 					common.Hash{0x2a}: {},
 					common.Hash{0x3a}: {},
 					common.Hash{0x4a}: {},
@@ -462,18 +462,18 @@ func TestDescendant(t *testing.T) {
 					common.Hash{0x3b}: {},
 					common.Hash{0x4b}: {},
 				},
-				common.Hash{0x2a}: {
+				{0x2a}: {
 					common.Hash{0x3a}: {},
 					common.Hash{0x4a}: {},
 				},
-				common.Hash{0x3a}: {
+				{0x3a}: {
 					common.Hash{0x4a}: {},
 				},
-				common.Hash{0x2b}: {
+				{0x2b}: {
 					common.Hash{0x3b}: {},
 					common.Hash{0x4b}: {},
 				},
-				common.Hash{0x3b}: {
+				{0x3b}: {
 					common.Hash{0x4b}: {},
 				},
 			},
@@ -483,7 +483,7 @@ func TestDescendant(t *testing.T) {
 				tr.cap(common.Hash{0x4a}, 1)
 			},
 			snapshotB: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x3a}: {
+				{0x3a}: {
 					common.Hash{0x4a}: {},
 				},
 			},
@@ -502,23 +502,23 @@ func TestDescendant(t *testing.T) {
 				return tr
 			},
 			snapshotA: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x1}: {
+				{0x1}: {
 					common.Hash{0x2}:  {},
 					common.Hash{0x3a}: {},
 					common.Hash{0x4a}: {},
 					common.Hash{0x3b}: {},
 					common.Hash{0x4b}: {},
 				},
-				common.Hash{0x2}: {
+				{0x2}: {
 					common.Hash{0x3a}: {},
 					common.Hash{0x4a}: {},
 					common.Hash{0x3b}: {},
 					common.Hash{0x4b}: {},
 				},
-				common.Hash{0x3a}: {
+				{0x3a}: {
 					common.Hash{0x4a}: {},
 				},
-				common.Hash{0x3b}: {
+				{0x3b}: {
 					common.Hash{0x4b}: {},
 				},
 			},
@@ -529,16 +529,16 @@ func TestDescendant(t *testing.T) {
 				tr.cap(common.Hash{0x4a}, 2)
 			},
 			snapshotB: map[common.Hash]map[common.Hash]struct{}{
-				common.Hash{0x2}: {
+				{0x2}: {
 					common.Hash{0x3a}: {},
 					common.Hash{0x4a}: {},
 					common.Hash{0x3b}: {},
 					common.Hash{0x4b}: {},
 				},
-				common.Hash{0x3a}: {
+				{0x3a}: {
 					common.Hash{0x4a}: {},
 				},
-				common.Hash{0x3b}: {
+				{0x3b}: {
 					common.Hash{0x4b}: {},
 				},
 			},
