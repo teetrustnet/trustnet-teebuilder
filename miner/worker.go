@@ -219,10 +219,10 @@ type worker struct {
 
 	// recommit is the time interval to re-create sealing work or to re-build
 	// payload in proof-of-stake stage.
-    recommit          time.Duration
-    recentMinedBlocks *lru.Cache[uint64, []common.Hash]
-    bundleCache       *BundleCache
-    pendingLogsFeed   event.Feed
+	recommit              time.Duration
+	recentMinedBlocks     *lru.Cache[uint64, []common.Hash]
+	bundleCache           *BundleCache
+	privateBundleAuctions *lru.Cache[common.Hash, *PrivateBundleAuction]
 
     // Test hooks
     newTaskHook  func(*task)                        // Method to call upon receiving a new sealing task.
@@ -232,30 +232,31 @@ type worker struct {
 }
 
 func newWorker(config *minerconfig.Config, engine consensus.Engine, eth Backend, mux *event.TypeMux) *worker {
-    chainConfig := eth.BlockChain().Config()
-    worker := &worker{
-		prefetcher:         core.NewStatePrefetcher(chainConfig, eth.BlockChain().HeadChain()),
-		config:             config,
-		chainConfig:        chainConfig,
-		engine:             engine,
-		eth:                eth,
-		chain:              eth.BlockChain(),
-		mux:                mux,
-		coinbase:           config.Etherbase,
-		extra:              config.ExtraData,
-		tip:                uint256.MustFromBig(config.GasPrice),
-		pendingTasks:       make(map[common.Hash]*task),
-		chainHeadCh:        make(chan core.ChainHeadEvent, chainHeadChanSize),
-		newWorkCh:          make(chan *newWorkReq),
-		getWorkCh:          make(chan *getWorkReq),
-		taskCh:             make(chan *task),
-		resultCh:           make(chan *types.Block, resultQueueSize),
-		startCh:            make(chan struct{}, 1),
-		exitCh:             make(chan struct{}),
-        resubmitIntervalCh: make(chan time.Duration),
-        recentMinedBlocks:  lru.NewCache[uint64, []common.Hash](recentMinedCacheLimit),
-        bundleCache:        NewBundleCache(),
-    }
+	chainConfig := eth.BlockChain().Config()
+	worker := &worker{
+		prefetcher:            core.NewStatePrefetcher(chainConfig, eth.BlockChain().HeadChain()),
+		config:                config,
+		chainConfig:           chainConfig,
+		engine:                engine,
+		eth:                   eth,
+		chain:                 eth.BlockChain(),
+		mux:                   mux,
+		coinbase:              config.Etherbase,
+		extra:                 config.ExtraData,
+		tip:                   uint256.MustFromBig(config.GasPrice),
+		pendingTasks:          make(map[common.Hash]*task),
+		chainHeadCh:           make(chan core.ChainHeadEvent, chainHeadChanSize),
+		newWorkCh:             make(chan *newWorkReq),
+		getWorkCh:             make(chan *getWorkReq),
+		taskCh:                make(chan *task),
+		resultCh:              make(chan *types.Block, resultQueueSize),
+		startCh:               make(chan struct{}, 1),
+		exitCh:                make(chan struct{}),
+		resubmitIntervalCh:    make(chan time.Duration),
+		recentMinedBlocks:     lru.NewCache[uint64, []common.Hash](recentMinedCacheLimit),
+		bundleCache:           NewBundleCache(),
+		privateBundleAuctions: lru.NewCache[common.Hash, *PrivateBundleAuction](128),
+	}
 	// Subscribe events for blockchain
 	worker.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)
 

@@ -37,6 +37,20 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
+type PrivateBundleAuctionInfo struct {
+	BlockNumber         uint64
+	ParentHash          common.Hash
+	WinnerBundle        common.Hash
+	SecondBundle        common.Hash
+	ScoreWinner         *big.Int
+	ScoreSecond         *big.Int
+	BribeWinner         *big.Int
+	BribeSecond         *big.Int
+	RefundTotal         *big.Int
+	WinnerBribeBySender map[common.Address]*big.Int
+	CreatedAt           time.Time
+}
+
 // Backend interface provides the common API services (that are provided by
 // both full and light clients) with access to necessary functions.
 type Backend interface {
@@ -124,6 +138,8 @@ type Backend interface {
 	SendBid(ctx context.Context, bid *types.BidArgs) (common.Hash, error)
 	// MinerInTurn returns true if the validator is in turn to propose the block.
 	MinerInTurn() bool
+	// PrivateBundleAuction returns the private bundle auction info for the given winner bundle hash if available.
+	PrivateBundleAuction(bundleHash common.Hash) *PrivateBundleAuctionInfo
 
 	CurrentView() *filtermaps.ChainView
 	NewMatcherBackend() filtermaps.MatcherBackend

@@ -42,6 +42,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
+	ethapi "github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -374,8 +375,6 @@ func (b *EthAPIBackend) SendPrivateTx(ctx context.Context, signedTx *types.Trans
 
 func (b *EthAPIBackend) PrivateTxMode() bool { return b.privateTxEnabled }
 
-func (b *EthAPIBackend) nodePrivateTxMode() bool { return b.privateTxEnabled }
-
 func (b *EthAPIBackend) BundlePrice() *big.Int {
 	if b.eth.bundlePool == nil {
 		return big.NewInt(0)
@@ -388,6 +387,33 @@ func (b *EthAPIBackend) SimulateGaslessBundle(bundle *types.Bundle) (*types.Simu
 func (b *EthAPIBackend) SendBundle(ctx context.Context, bundle *types.Bundle) error {
 	if b.eth.bundlePool == nil {
 		return errors.New("bundle pool not initialized")
+	}
+	mevCfg := b.eth.config.Miner.Mev
+	if mevCfg.BuilderControlEOA != (common.Address{}) && mevCfg.MinBribe != nil && *mevCfg.MinBribe != "" {
+		minBribe, ok := new(big.Int).SetString(*mevCfg.MinBribe, 10)
+		if !ok {
+			return errors.New("invalid MinBribe")
+		}
+		if minBribe.Sign() > 0 {
+			bribe := big.NewInt(0)
+			for _, tx := range bundle.Txs {
+				if tx == nil {
+					continue
+				}
+				to := tx.To()
+				if to == nil || *to != mevCfg.BuilderControlEOA {
+					continue
+				}
+				value := tx.Value()
+				if value == nil || value.Sign() <= 0 {
+					continue
+				}
+				bribe.Add(bribe, value)
+			}
+			if bribe.Cmp(minBribe) < 0 {
+				return errors.New("bundle bribe too low")
+			}
+		}
 	}
 	return b.eth.bundlePool.AddBundle(bundle)
 }
@@ -608,4 +634,47 @@ func (b *EthAPIBackend) SendBid(ctx context.Context, bid *types.BidArgs) (common
 
 func (b *EthAPIBackend) MinerInTurn() bool {
 	return b.Miner().InTurn()
+}
+
+func (b *EthAPIBackend) PrivateBundleAuction(bundleHash common.Hash) *ethapi.PrivateBundleAuctionInfo {
+	miner := b.Miner()
+	if miner == nil {
+		return nil
+	}
+	auction := miner.PrivateBundleAuction(bundleHash)
+	if auction == nil {
+		return nil
+	}
+	info := &ethapi.PrivateBundleAuctionInfo{
+		BlockNumber:  auction.BlockNumber,
+		ParentHash:   auction.ParentHash,
+		WinnerBundle: auction.WinnerBundle,
+		SecondBundle: auction.SecondBundle,
+		CreatedAt:    auction.CreatedAt,
+	}
+	if auction.ScoreWinner != nil {
+		info.ScoreWinner = new(big.Int).Set(auction.ScoreWinner)
+	}
+	if auction.ScoreSecond != nil {
+		info.ScoreSecond = new(big.Int).Set(auction.ScoreSecond)
+	}
+	if auction.BribeWinner != nil {
+		info.BribeWinner = new(big.Int).Set(auction.BribeWinner)
+	}
+	if auction.BribeSecond != nil {
+		info.BribeSecond = new(big.Int).Set(auction.BribeSecond)
+	}
+	if auction.RefundTotal != nil {
+		info.RefundTotal = new(big.Int).Set(auction.RefundTotal)
+	}
+	if len(auction.WinnerBribeBySender) > 0 {
+		info.WinnerBribeBySender = make(map[common.Address]*big.Int, len(auction.WinnerBribeBySender))
+		for addr, amount := range auction.WinnerBribeBySender {
+			if amount == nil {
+				continue
+			}
+			info.WinnerBribeBySender[addr] = new(big.Int).Set(amount)
+		}
+	}
+	return info
 }

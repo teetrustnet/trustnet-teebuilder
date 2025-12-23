@@ -45,6 +45,7 @@ var (
 	defaultMevEnabled          = false
 	defaultGreedyMergeTx       = true
 	defaultBuilderFeeCeil      = "0"
+	defaultMinBribe            = "0"
 	defaultValidatorCommission = uint64(100)
 	defaultMaxBidsPerBuilder   = uint32(2) // Simple strategy: send one bid early, another near deadline
 	defaultBuilderEnabled      = false
@@ -99,6 +100,8 @@ type MevConfig struct {
 	Enabled               *bool             `toml:",omitempty"` // Whether to enable Mev or not
 	GreedyMergeTx         *bool             `toml:",omitempty"` // Whether to merge local transactions to the bid
 	BuilderFeeCeil        *string           `toml:",omitempty"` // The maximum builder fee of a bid
+	BuilderControlEOA     common.Address    `toml:",omitempty"`
+	MinBribe              *string           `toml:",omitempty"`
 	SentryURL             string            // The url of Mev sentry
 	Builders              []BuilderConfig   // The list of builders
 	BuilderEnabled        *bool             `toml:",omitempty"` // Whether to run in builder mode
@@ -114,6 +117,8 @@ var DefaultMevConfig = MevConfig{
 	Enabled:               &defaultMevEnabled,
 	GreedyMergeTx:         &defaultGreedyMergeTx,
 	BuilderFeeCeil:        &defaultBuilderFeeCeil,
+	BuilderControlEOA:     common.Address{},
+	MinBribe:              &defaultMinBribe,
 	SentryURL:             "",
 	Builders:              nil,
 	BuilderEnabled:        &defaultBuilderEnabled,
@@ -157,6 +162,10 @@ func ApplyDefaultMinerConfig(cfg *Config) {
 	if cfg.Mev.BuilderFeeCeil == nil {
 		cfg.Mev.BuilderFeeCeil = &defaultBuilderFeeCeil
 		log.Info("ApplyDefaultMinerConfig", "Mev.BuilderFeeCeil", *cfg.Mev.BuilderFeeCeil)
+	}
+	if cfg.Mev.MinBribe == nil {
+		cfg.Mev.MinBribe = &defaultMinBribe
+		log.Info("ApplyDefaultMinerConfig", "Mev.MinBribe", *cfg.Mev.MinBribe)
 	}
 	if cfg.Mev.GreedyMergeTx == nil {
 		cfg.Mev.GreedyMergeTx = &defaultGreedyMergeTx

@@ -630,6 +630,9 @@ func (b testBackend) BundlePrice() *big.Int {
 func (b testBackend) Bundles(ctx context.Context, fromBlock, toBlock int64) []*types.BundlesItem {
 	panic("implement me")
 }
+func (b testBackend) PrivateBundleAuction(bundleHash common.Hash) *PrivateBundleAuctionInfo {
+	return nil
+}
 func (b testBackend) GetCanonicalTransaction(txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64) {
 	tx, blockHash, blockNumber, index := rawdb.ReadCanonicalTransaction(b.db, txHash)
 	return tx != nil, tx, blockHash, blockNumber, index

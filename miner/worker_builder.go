@@ -7,8 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/holiman/uint256"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
@@ -19,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/holiman/uint256"
 )
 
 const smallBundleGas = 10 * params.TxGas
@@ -28,8 +27,29 @@ var (
 	errBundlePriceTooLow            = errors.New("bundle price too low")
 )
 
-// fillTransactions retrieves the pending bundles and transactions from the txpool and fills them
-// into the given sealing block. The selection and ordering strategy can be extended in the future.
+type privateBundleCandidate struct {
+	bundleHash common.Hash
+	txs        types.Transactions
+	gasFees    *big.Int
+	score      *big.Int
+	bribe      *big.Int
+	bribeBy    map[common.Address]*big.Int
+}
+
+type PrivateBundleAuction struct {
+	BlockNumber         uint64
+	ParentHash          common.Hash
+	WinnerBundle        common.Hash
+	SecondBundle        common.Hash
+	ScoreWinner         *big.Int
+	ScoreSecond         *big.Int
+	BribeWinner         *big.Int
+	BribeSecond         *big.Int
+	RefundTotal         *big.Int
+	WinnerBribeBySender map[common.Address]*big.Int
+	CreatedAt           time.Time
+}
+
 func (w *worker) fillTransactionsAndBundles(interruptCh chan int32, env *environment, stopTimer *time.Timer) error {
 	env.state.StopPrefetcher() // no need to prefetch txs for a builder
 
@@ -41,11 +61,35 @@ func (w *worker) fillTransactionsAndBundles(interruptCh chan int32, env *environ
 		env.header.GasLimit = fullGasLimit
 	}()
 
-	// commit bundles
-	{
-		bundles := w.eth.TxPool().PendingBundles(env.header.Number.Uint64(), env.header.Time)
+	bundles := w.eth.TxPool().PendingBundles(env.header.Number.Uint64(), env.header.Time)
+	if w.config.Mev.BuilderEnabled != nil && *w.config.Mev.BuilderEnabled {
+		if len(bundles) > 0 {
+			winner, second, err := w.selectWinningPrivateBundle(env, bundles)
+			if err != nil {
+				log.Error("fail to select winning private bundle", "err", err)
+				return err
+			}
+			if winner != nil && len(winner.txs) > 0 {
+				if err := w.commitBundles(env, winner.txs, interruptCh, stopTimer); err != nil {
+					log.Error("fail to commit winning private bundle", "err", err)
+					return err
+				}
+				payBribe := winner.bribe
+				if second != nil {
+					payBribe = second.bribe
+				}
+				env.profit.Set(winner.gasFees)
+				env.profit.Add(env.profit, payBribe)
+				w.recordPrivateBundleAuction(env, winner, second)
+				log.Info("fill private bundle", "bundles_count", len(bundles), "txs", len(winner.txs), "score", winner.score)
+			}
+		}
 
-		// if no bundles, skip bundle commit
+		log.Info("fill bundles done", "total_txs_count", len(env.txs))
+		return nil
+	}
+
+	{
 		if len(bundles) > 0 {
 			txs, bundle, err := w.generateOrderedBundles(env, bundles)
 			if err != nil {
@@ -63,7 +107,6 @@ func (w *worker) fillTransactionsAndBundles(interruptCh chan int32, env *environ
 		}
 	}
 
-	// commit normal transactions
 	{
 		w.confMu.RLock()
 		tip := w.tip
@@ -125,6 +168,240 @@ func (w *worker) fillTransactionsAndBundles(interruptCh chan int32, env *environ
 
 	log.Info("test: fill bundles and transactions done", "total_txs_count", len(env.txs))
 	return nil
+}
+
+func (w *worker) selectWinningPrivateBundle(env *environment, bundles []*types.Bundle) (winner *privateBundleCandidate, second *privateBundleCandidate, err error) {
+	minBribe := w.privateBundleMinBribe()
+	control := w.config.Mev.BuilderControlEOA
+
+	candidates := make([]*privateBundleCandidate, 0)
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+	)
+	for _, bundle := range bundles {
+		if bundle == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(bundle *types.Bundle, state *state.StateDB) {
+			defer wg.Done()
+			bundleHash := bundle.Hash()
+			bundleCopy := copyBundleForSimulation(bundle)
+
+			gasPool := prepareGasPool(env.header.GasLimit)
+			evm := vm.NewEVM(core.NewEVMBlockContext(env.header, w.chain, &env.coinbase), state, w.chainConfig, vm.Config{})
+			gasFees, bribe, bribeBy, execErr := w.simulateBundleForPrivateAuction(evm, env.header, bundleCopy, state, gasPool, env.signer, control)
+			if execErr != nil || len(bundleCopy.Txs) == 0 {
+				return
+			}
+			if minBribe.Sign() > 0 && bribe.Cmp(minBribe) < 0 {
+				return
+			}
+			score := new(big.Int).Add(gasFees, bribe)
+
+			mu.Lock()
+			candidates = append(candidates, &privateBundleCandidate{
+				bundleHash: bundleHash,
+				txs:        bundleCopy.Txs,
+				gasFees:    new(big.Int).Set(gasFees),
+				score:      score,
+				bribe:      new(big.Int).Set(bribe),
+				bribeBy:    bribeBy,
+			})
+			mu.Unlock()
+		}(bundle, env.state.Copy())
+	}
+	wg.Wait()
+
+	if len(candidates) == 0 {
+		return nil, nil, nil
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score.Cmp(candidates[j].score) != 0 {
+			return candidates[i].score.Cmp(candidates[j].score) > 0
+		}
+		if candidates[i].bribe.Cmp(candidates[j].bribe) != 0 {
+			return candidates[i].bribe.Cmp(candidates[j].bribe) > 0
+		}
+		return candidates[i].bundleHash.Big().Cmp(candidates[j].bundleHash.Big()) > 0
+	})
+
+	winner = candidates[0]
+	if len(candidates) > 1 {
+		second = candidates[1]
+	}
+	return winner, second, nil
+}
+
+func (w *worker) privateBundleMinBribe() *big.Int {
+	if w.config == nil {
+		return big.NewInt(0)
+	}
+	if w.config.Mev.MinBribe == nil || *w.config.Mev.MinBribe == "" {
+		return big.NewInt(0)
+	}
+	minBribe, ok := new(big.Int).SetString(*w.config.Mev.MinBribe, 10)
+	if !ok {
+		log.Error("failed to parse MinBribe", "MinBribe", *w.config.Mev.MinBribe)
+		return big.NewInt(0)
+	}
+	return minBribe
+}
+
+func (w *worker) recordPrivateBundleAuction(env *environment, winner *privateBundleCandidate, second *privateBundleCandidate) {
+	if w.privateBundleAuctions == nil || env == nil || env.header == nil || winner == nil {
+		return
+	}
+
+	var (
+		secondHash  common.Hash
+		scoreSecond = big.NewInt(0)
+		bribeSecond = big.NewInt(0)
+		refundTotal = big.NewInt(0)
+	)
+	if second != nil {
+		secondHash = second.bundleHash
+		scoreSecond = new(big.Int).Set(second.score)
+		bribeSecond = new(big.Int).Set(second.bribe)
+		refundTotal = new(big.Int).Sub(winner.bribe, second.bribe)
+		if refundTotal.Sign() < 0 {
+			refundTotal.SetInt64(0)
+		}
+	}
+
+	bribeBy := make(map[common.Address]*big.Int, len(winner.bribeBy))
+	for addr, amount := range winner.bribeBy {
+		if amount == nil {
+			continue
+		}
+		bribeBy[addr] = new(big.Int).Set(amount)
+	}
+
+	r := &PrivateBundleAuction{
+		BlockNumber:         env.header.Number.Uint64(),
+		ParentHash:          env.header.ParentHash,
+		WinnerBundle:        winner.bundleHash,
+		SecondBundle:        secondHash,
+		ScoreWinner:         new(big.Int).Set(winner.score),
+		ScoreSecond:         scoreSecond,
+		BribeWinner:         new(big.Int).Set(winner.bribe),
+		BribeSecond:         bribeSecond,
+		RefundTotal:         refundTotal,
+		WinnerBribeBySender: bribeBy,
+		CreatedAt:           time.Now(),
+	}
+
+	w.privateBundleAuctions.Add(r.WinnerBundle, r)
+}
+
+func copyBundleForSimulation(bundle *types.Bundle) *types.Bundle {
+	if bundle == nil {
+		return nil
+	}
+	cpy := *bundle
+	cpy.Txs = append(types.Transactions(nil), bundle.Txs...)
+	cpy.RevertingTxHashes = append([]common.Hash(nil), bundle.RevertingTxHashes...)
+	cpy.DroppingTxHashes = append([]common.Hash(nil), bundle.DroppingTxHashes...)
+	cpy.Price = nil
+	return &cpy
+}
+
+func (w *worker) simulateBundleForPrivateAuction(
+	evm *vm.EVM,
+	header *types.Header,
+	bundle *types.Bundle,
+	state *state.StateDB,
+	gasPool *core.GasPool,
+	signer types.Signer,
+	control common.Address,
+) (gasFees *big.Int, bribe *big.Int, bribeBy map[common.Address]*big.Int, err error) {
+	var (
+		tempGasUsed   uint64
+		totalGasFees  = new(big.Int)
+		totalBribe    = new(big.Int)
+		bribeBySender = make(map[common.Address]*big.Int)
+		seenTxs       = make(map[common.Hash]struct{})
+	)
+
+	txsLen := len(bundle.Txs)
+	for i := 0; i < txsLen; i++ {
+		tx := bundle.Txs[i]
+		if tx == nil {
+			return nil, nil, nil, errors.New("unexpected nil transaction in bundle")
+		}
+		txHash := tx.Hash()
+		if _, ok := seenTxs[txHash]; ok {
+			continue
+		}
+		seenTxs[txHash] = struct{}{}
+
+		state.SetTxContext(txHash, i)
+		snap := state.Snapshot()
+		gp := gasPool.Gas()
+
+		receipt, applyErr := core.ApplyTransaction(evm, gasPool, state, header, tx, &tempGasUsed)
+		if applyErr != nil {
+			if containsHash(bundle.DroppingTxHashes, txHash) {
+				state.RevertToSnapshot(snap)
+				gasPool.SetGas(gp)
+				bundle.Txs = bundle.Txs.Remove(i)
+				txsLen = len(bundle.Txs)
+				i--
+				continue
+			}
+			return nil, nil, nil, applyErr
+		}
+		if receipt.Status == types.ReceiptStatusFailed && !containsHash(bundle.RevertingTxHashes, receipt.TxHash) {
+			if containsHash(bundle.DroppingTxHashes, receipt.TxHash) {
+				gasPool.SetGas(gp)
+				bundle.Txs = bundle.Txs.Remove(i)
+				txsLen = len(bundle.Txs)
+				i--
+				continue
+			}
+			return nil, nil, nil, errNonRevertingTxInBundleFailed
+		}
+
+		txGasUsed := new(big.Int).SetUint64(receipt.GasUsed)
+		effectiveTip, tipErr := tx.EffectiveGasTip(header.BaseFee)
+		if tipErr != nil {
+			return nil, nil, nil, tipErr
+		}
+		if header.BaseFee != nil {
+			effectiveTip.Add(effectiveTip, header.BaseFee)
+		}
+		txGasFees := new(big.Int).Mul(txGasUsed, effectiveTip)
+		if tx.Type() == types.BlobTxType {
+			blobFee := new(big.Int).SetUint64(receipt.BlobGasUsed)
+			blobFee.Mul(blobFee, receipt.BlobGasPrice)
+			txGasFees.Add(txGasFees, blobFee)
+		}
+		totalGasFees.Add(totalGasFees, txGasFees)
+
+		if control != (common.Address{}) {
+			to := tx.To()
+			if to != nil && *to == control {
+				value := tx.Value()
+				if value != nil && value.Sign() > 0 {
+					from, senderErr := types.Sender(signer, tx)
+					if senderErr == nil {
+						totalBribe.Add(totalBribe, value)
+						if bribeBySender[from] == nil {
+							bribeBySender[from] = new(big.Int)
+						}
+						bribeBySender[from].Add(bribeBySender[from], value)
+					}
+				}
+			}
+		}
+	}
+
+	if len(bundle.Txs) == 0 {
+		return nil, nil, nil, errors.New("empty bundle")
+	}
+	return totalGasFees, totalBribe, bribeBySender, nil
 }
 
 func (w *worker) commitBundles(

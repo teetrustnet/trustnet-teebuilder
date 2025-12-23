@@ -186,9 +186,6 @@ func (b *Bidder) isRegistered(validator common.Address) bool {
 	return ok
 }
 
-// registerValidatorEndpoint is currently unused in this merged codebase.
-func (b *Bidder) registerValidatorEndpoint(url string, address common.Address) {}
-
 func (b *Bidder) unregister(validator common.Address) {
 	b.validatorsMu.Lock()
 	defer b.validatorsMu.Unlock()

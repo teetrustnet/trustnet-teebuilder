@@ -3,9 +3,11 @@ package ethapi
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -99,6 +101,62 @@ func (m *MevAPI) HasBuilder(builder common.Address) bool {
 // Running returns true if mev is running
 func (m *MevAPI) Running() bool {
 	return m.b.MevRunning()
+}
+
+type PrivateBundleAuctionResult struct {
+	BlockNumber         hexutil.Uint64                 `json:"blockNumber"`
+	ParentHash          common.Hash                    `json:"parentHash"`
+	WinnerBundle        common.Hash                    `json:"winnerBundle"`
+	SecondBundle        common.Hash                    `json:"secondBundle"`
+	ScoreWinner         *hexutil.Big                   `json:"scoreWinner,omitempty"`
+	ScoreSecond         *hexutil.Big                   `json:"scoreSecond,omitempty"`
+	BribeWinner         *hexutil.Big                   `json:"bribeWinner,omitempty"`
+	BribeSecond         *hexutil.Big                   `json:"bribeSecond,omitempty"`
+	RefundTotal         *hexutil.Big                   `json:"refundTotal,omitempty"`
+	WinnerBribeBySender map[common.Address]*hexutil.Big `json:"winnerBribeBySender,omitempty"`
+	CreatedAt           int64                          `json:"createdAt"`
+}
+
+func newHexBig(v *big.Int) *hexutil.Big {
+	if v == nil {
+		return nil
+	}
+	b := (*hexutil.Big)(new(big.Int))
+	(*big.Int)(b).Set(v)
+	return b
+}
+
+func toPrivateBundleAuctionResult(info *PrivateBundleAuctionInfo) *PrivateBundleAuctionResult {
+	if info == nil {
+		return nil
+	}
+	res := &PrivateBundleAuctionResult{
+		BlockNumber: hexutil.Uint64(info.BlockNumber),
+		ParentHash:  info.ParentHash,
+		WinnerBundle: info.WinnerBundle,
+		SecondBundle: info.SecondBundle,
+		CreatedAt:    info.CreatedAt.UnixMilli(),
+	}
+	res.ScoreWinner = newHexBig(info.ScoreWinner)
+	res.ScoreSecond = newHexBig(info.ScoreSecond)
+	res.BribeWinner = newHexBig(info.BribeWinner)
+	res.BribeSecond = newHexBig(info.BribeSecond)
+	res.RefundTotal = newHexBig(info.RefundTotal)
+	if len(info.WinnerBribeBySender) > 0 {
+		res.WinnerBribeBySender = make(map[common.Address]*hexutil.Big, len(info.WinnerBribeBySender))
+		for addr, amount := range info.WinnerBribeBySender {
+			res.WinnerBribeBySender[addr] = newHexBig(amount)
+		}
+	}
+	return res
+}
+
+func (m *MevAPI) PrivateBundleAuction(_ context.Context, bundleHash common.Hash) (*PrivateBundleAuctionResult, error) {
+	info := m.b.PrivateBundleAuction(bundleHash)
+	if info == nil {
+		return nil, nil
+	}
+	return toPrivateBundleAuctionResult(info), nil
 }
 
 // ReportIssue is served by builder, for receiving issue from validators

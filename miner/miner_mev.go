@@ -98,3 +98,14 @@ func (miner *Miner) MevParams() *types.MevParams {
 		Version:               version.Semantic,
 	}
 }
+
+func (miner *Miner) PrivateBundleAuction(bundleHash common.Hash) *PrivateBundleAuction {
+	if miner.worker == nil || miner.worker.privateBundleAuctions == nil {
+		return nil
+	}
+	auction, ok := miner.worker.privateBundleAuctions.Peek(bundleHash)
+	if !ok || auction == nil {
+		return nil
+	}
+	return auction
+}
