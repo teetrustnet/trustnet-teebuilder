@@ -1,305 +1,350 @@
+# TrustNet TEE Builder
+
+TrustNet TEE Builder is a BNB Smart Chain (BSC) compatible builder node that implements a PBS/MEV bundle auction and is designed to run inside a Trusted Execution Environment (TEE).
+
 ## BNB Smart Chain
 
-The goal of BNB Smart Chain is to bring programmability and interoperability to BNB Beacon Chain. In order to embrace the existing popular community and advanced technology, it will bring huge benefits by staying compatible with all the existing smart contracts on Ethereum and Ethereum tooling. And to achieve that, the easiest solution is to develop based on go-ethereum fork, as we respect the great work of Ethereum very much.
+TrustNet TEE Builder is based on the official BNB Smart Chain client and inherits its consensus, networking and JSON-RPC behavior. For MEV/PBS design and general BSC background, please refer to the upstream builder README and related documentation.
 
-BNB Smart Chain starts its development based on go-ethereum fork. So you may see many toolings, binaries and also docs are based on Ethereum ones, such as the name "geth".
+### Upstream BSC builder documentation (appendix)
 
-[![API Reference](
-https://pkg.go.dev/badge/github.com/ethereum/go-ethereum
-)](https://pkg.go.dev/github.com/ethereum/go-ethereum?tab=doc)
-[![Build Test](https://github.com/bnb-chain/bsc/actions/workflows/build-test.yml/badge.svg)](https://github.com/bnb-chain/bsc/actions)
-[![Discord](https://img.shields.io/badge/discord-join%20chat-blue.svg)](https://discord.gg/z2VpC455eU)
+For generic BSC PBS builder design, MEV background and integration details, please refer to the original BSC builder repository:
 
-But from that baseline of EVM compatible, BNB Smart Chain introduces a system of 21 validators with Proof of Staked Authority (PoSA) consensus that can support short block time and lower fees. The most bonded validator candidates of staking will become validators and produce blocks. The double-sign detection and other slashing logic guarantee security, stability, and chain finality.
+- https://github.com/bnb-chain/bsc-builder/blob/main/README.md
 
-**The BNB Smart Chain** will be:
+The rest of this README focuses on TrustNet TEE Builder-specific behavior and TEE deployment.
 
-- **A self-sovereign blockchain**: Provides security and safety with elected validators.
-- **EVM-compatible**: Supports all the existing Ethereum tooling along with faster finality and cheaper transaction fees.
-- **Distributed with on-chain governance**: Proof of Staked Authority brings in decentralization and community participants. As the native token, BNB will serve as both the gas of smart contract execution and tokens for staking.
+## TrustNet Builder Guide 
 
-More details in [White Paper](https://github.com/bnb-chain/whitepaper/blob/master/WHITEPAPER.md).
+### 1. Feature Overview
 
-## Release Types
-There are three types of release, each with a clear purpose and version scheme:
+#### 1.1 PBS-based builder and ordering algorithm
 
-- **1.Stable Release**: production-ready builds for the vast majority of users.  Format: `v<Major>.<Minor>.<Patch>`, example: [v1.5.19](https://github.com/bnb-chain/bsc/releases/tag/v1.5.19).
-- **2.Feature Release**: early access to a single feature without affecting the core product. Format: `v<Major>.<Minor>.<Patch>-feature-<FeatureName>`, example: [v1.5.19-feature-SI](https://github.com/bnb-chain/bsc/releases/tag/v1.5.19-feature-SI).
-- **3.Preview Release**: bleeding-edge builds for users who want the latest code. Format: `v<Major>.<Minor>.<Patch>-<Meta>`, Meta values indicate maturity: alpha (experimental), beta (largely complete), rc (release candidate), example: [v1.5.0-alpha](https://github.com/bnb-chain/bsc/releases/tag/v1.5.0-alpha).
+- This project is a fork of BNB Smart Chain / go-ethereum and implements a PBS/MEV builder compatible with BSC.
+- When `Eth.Miner.Mev.BuilderEnabled = true` in the config, the node will, on each block it produces, select a winning private bundle from the bundle pool and include it in the block.
+- The selection logic for private bundles is:
+  - Read all candidate bundles from the pending bundle pool.
+  - For each bundle, run a full EVM simulation of all included transactions.
+  - Compute:
+    - `gasFees`: total gas fees from all transactions in the bundle (including blob gas if any).
+    - `bribe`: sum of `value` of all transactions whose `to` is `BuilderControlEOA`.
+    - `score = gasFees + bribe`: the combined score used for ordering.
+  - Filter out bundles whose bribe is lower than `MinBribe`.
+  - For the remaining candidates, sort descending by `score`, then by `bribe`, then by `bundleHash` and pick the first as `winner` and the second as `second`.
+- After the winner is selected, the node will:
+  - Commit the winner bundle’s transactions into the block.
+  - Add both the gas revenue and the bribe paid to the block profit.
+  - Record this auction result into an in-memory cache.
 
-## Key features
+`recordPrivateBundleAuction` builds a `PrivateBundleAuction` structure that:
 
-### Proof of Staked Authority 
-Although Proof-of-Work (PoW) has been approved as a practical mechanism to implement a decentralized network, it is not friendly to the environment and also requires a large size of participants to maintain the security. 
+- Stores `BlockNumber`, `ParentHash` and the hashes of the winning and second bundles.
+- Stores `ScoreWinner` / `ScoreSecond` and `BribeWinner` / `BribeSecond`.
+- Computes `RefundTotal = max(winner.bribe - second.bribe, 0)`.
+- Fills `WinnerBribeBySender`, showing the exact bribe contributed by each address sending funds to `BuilderControlEOA`.
+- Inserts it into a miner-side LRU cache in memory.
 
-Proof-of-Authority(PoA) provides some defense to 51% attack, with improved efficiency and tolerance to certain levels of Byzantine players (malicious or hacked). 
-Meanwhile, the PoA protocol is most criticized for being not as decentralized as PoW, as the validators, i.e. the nodes that take turns to produce blocks, have all the authorities and are prone to corruption and security attacks.
+Overall this implements a “gas fees + bribe” scoring and a second-price-like refund behavior on top of BSC blocks.
 
-Other blockchains, such as EOS and Cosmos both, introduce different types of Deputy Proof of Stake (DPoS) to allow the token holders to vote and elect the validator set. It increases the decentralization and favors community governance. 
+#### 1.2 TEE-specific deployment traits
 
-To combine DPoS and PoA for consensus, BNB Smart Chain implement a novel consensus engine called Parlia that:
+TrustNet Builder is designed to run inside a TEE (Trusted Execution Environment) to protect:
 
-1. Blocks are produced by a limited set of validators.
-2. Validators take turns to produce blocks in a PoA manner, similar to Ethereum's Clique consensus engine.
-3. Validator set are elected in and out based on a staking based governance on BNB Smart Chain.
-4. Parlia consensus engine will interact with a set of [system contracts](https://docs.bnbchain.org/bnb-smart-chain/staking/overview/#system-contracts) to achieve liveness slash, revenue distributing and validator set renewing func.
+- The contents of private transaction bundles during execution and ordering from leakage to the host machine.
+- The ordering and auction algorithm from being tampered with, by running it inside a trusted execution environment.
+- Builder keys, password files and configuration from being exposed outside the enclave.
 
-## Native Token
+### 2. Build and Run
 
-BNB will run on BNB Smart Chain in the same way as ETH runs on Ethereum so that it remains as `native token` for BSC. This means,
-BNB will be used to:
+#### 2.1 Build binaries locally
 
-1. pay `gas` to deploy or invoke Smart Contract on BSC
+- Build `geth` from this repository:
 
-## Building the source
+  ```shell
+  make geth
+  # or
+  go run build/ci.go install -static ./cmd/geth
+  ./build/bin/geth version
+  ```
 
-Many of the below are the same as or similar to go-ethereum.
+#### 2.2 Build Docker images
 
-For prerequisites and detailed build instructions please read the [Installation Instructions](https://geth.ethereum.org/docs/getting-started/installing-geth).
+- Multi-stage build directly from this source:
 
-Building `geth` requires both a Go (version 1.24 or later) and a C compiler (GCC 5 or higher). You can install
-them using your favourite package manager. Once the dependencies are installed, run
+  ```shell
+  docker build --pull -t trustnet-builder:latest -f Dockerfile .
+  ```
 
-```shell
-make geth
-```
+- If the default base images cannot be pulled, you can specify mirrors:
 
-or, to build the full suite of utilities:
+  ```shell
+  docker build \
+    --build-arg GO_BASE_IMAGE=dockerproxy.com/library/golang:1.24-alpine \
+    --build-arg RUNTIME_BASE_IMAGE=dockerproxy.com/library/alpine:3.21 \
+    -t trustnet-builder:latest -f Dockerfile .
+  ```
 
-```shell
-make all
-```
+- Tag and export the image for distribution:
 
-If you get such error when running the node with self built binary:
-```shell
-Caught SIGILL in blst_cgo_init, consult <blst>/bindinds/go/README.md.
-```
-please try to add the following environment variables and build again:
-```shell
-export CGO_CFLAGS="-O -D__BLST_PORTABLE__" 
-export CGO_CFLAGS_ALLOW="-O -D__BLST_PORTABLE__"
-```
+  ```shell
+  make docker-tag-trustnet
+  make docker-save-trustnet
+  # Output: ./trustnet-builder.tar
+  ```
 
-## Executables
+- Load and verify on the target host:
 
-The bsc project comes with several wrappers/executables found in the `cmd`
-directory.
+  ```shell
+  sudo docker load -i trustnet-builder.tar
+  sudo docker run --rm trustnet-builder:latest geth version
+  ```
 
-|  Command   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| :--------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`geth`** | Main BNB Smart Chain client binary. It is the entry point into the BSC network (main-, test- or private net), capable of running as a full node (default), archive node (retaining all historical state) or a light node (retrieving data live). It has the same and more RPC and other interface as go-ethereum and can be used by other processes as a gateway into the BSC network via JSON RPC endpoints exposed on top of HTTP, WebSocket and/or IPC transports. `geth --help` and the [CLI page](https://geth.ethereum.org/docs/interface/command-line-options) for command line options. |
-|   `clef`   | Stand-alone signing tool, which can be used as a backend signer for `geth`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-|  `devp2p`  | Utilities to interact with nodes on the networking layer, without running a full blockchain.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-|  `abigen`  | Source code generator to convert Ethereum contract definitions into easy to use, compile-time type-safe Go packages. It operates on plain [Ethereum contract ABIs](https://docs.soliditylang.org/en/develop/abi-spec.html) with expanded functionality if the contract bytecode is also available. However, it also accepts Solidity source files, making development much more streamlined. Please see our [Native DApps](https://geth.ethereum.org/docs/dapp/native-bindings) page for details.                                                                                               |
-| `bootnode` | Stripped down version of our Ethereum client implementation that only takes part in the network node discovery protocol, but does not run any of the higher level application protocols. It can be used as a lightweight bootstrap node to aid in finding peers in private networks.                                                                                                                                                                                                                                                                                                            |
-|   `evm`    | Developer utility version of the EVM (Ethereum Virtual Machine) that is capable of running bytecode snippets within a configurable environment and execution mode. Its purpose is to allow isolated, fine-grained debugging of EVM opcodes (e.g. `evm --code 60ff60ff --debug run`).                                                                                                                                                                                                                                                                                                            |
-| `rlpdump`  | Developer utility tool to convert binary RLP ([Recursive Length Prefix](https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp)) dumps (data encoding used by the Ethereum protocol both network as well as consensus wise) to user-friendlier hierarchical representation (e.g. `rlpdump --hex CE0183FFFFFFC4C304050583616263`).                                                                                                                                                                                                                                                                                 |
+#### 2.3 Run with Docker Compose
 
-## Running `geth`
+Fixed directory conventions:
 
-Going through all the possible command line flags is out of scope here (please consult our
-[CLI Wiki page](https://geth.ethereum.org/docs/fundamentals/command-line-options)),
-but we've enumerated a few common parameter combos to get you up to speed quickly
-on how you can run your own `geth` instance.
+- Mainnet:
+  - Config: `/tmp/bsc/config/mainnet`
+  - Data: `/tmp/bsc/data/mainnet`
+  - Password: `/tmp/bsc/secret/password.txt`
+- Testnet:
+  - Config: `/tmp/bsc/config/testnet`
+  - Data: `/tmp/bsc/data/testnet`
+  - Password: `/tmp/bsc/secret/password.txt`
 
-### Hardware Requirements
-
-The hardware must meet certain requirements to run a full node on mainnet:
-- VPS running recent versions of Mac OS X, Linux, or Windows.
-- IMPORTANT 3 TB(Dec 2023) of free disk space, solid-state drive(SSD), gp3, 8k IOPS, 500 MB/S throughput, read latency <1ms. (if node is started with snap sync, it will need NVMe SSD)
-- 16 cores of CPU and 64 GB of memory (RAM)
-- Suggest m5zn.6xlarge or r7iz.4xlarge instance type on AWS, c2-standard-16 on Google cloud.
-- A broadband Internet connection with upload/download speeds of 5 MB/S
-
-The requirement for testnet:
-- VPS running recent versions of Mac OS X, Linux, or Windows.
-- 500G of storage for testnet.
-- 4 cores of CPU and 16 gigabytes of memory (RAM).
-
-### Steps to Run a Fullnode
-
-#### 1. Download the pre-build binaries
-```shell
-# Linux
-wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep geth_linux |cut -d\" -f4)
-mv geth_linux geth
-chmod -v u+x geth
-
-# MacOS
-wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep geth_mac |cut -d\" -f4)
-mv geth_macos geth
-chmod -v u+x geth
-```
-
-#### 2. Download the config files
-```shell
-//== mainnet
-wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep mainnet |cut -d\" -f4)
-unzip mainnet.zip
-
-//== testnet
-wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep testnet |cut -d\" -f4)
-unzip testnet.zip
-```
-
-#### 3. Download snapshot
-Download latest chaindata snapshot from [here](https://github.com/bnb-chain/bsc-snapshots). Follow the guide to structure your files.
-
-#### 4. Start a full node
-```shell
-## It will run with Path-Base Storage Scheme by default and enable inline state prune, keeping the latest 90000 blocks' history state.
-./geth --config ./config.toml --datadir ./node  --cache 8000 --rpc.allow-unprotected-txs --history.transactions 0
-
-## It is recommend to run fullnode with `--tries-verify-mode none` if you want high performance and care little about state consistency.
-./geth --config ./config.toml --datadir ./node  --cache 8000 --rpc.allow-unprotected-txs --history.transactions 0 --tries-verify-mode none
-```
-
-#### 5. Monitor node status
-
-Monitor the log from **./node/bsc.log** by default. When the node has started syncing, should be able to see the following output:
-```shell
-t=2022-09-08T13:00:27+0000 lvl=info msg="Imported new chain segment"             blocks=1    txs=177   mgas=17.317   elapsed=31.131ms    mgasps=556.259  number=21,153,429 hash=0x42e6b54ba7106387f0650defc62c9ace3160b427702dab7bd1c5abb83a32d8db dirty="0.00 B"
-t=2022-09-08T13:00:29+0000 lvl=info msg="Imported new chain segment"             blocks=1    txs=251   mgas=39.638   elapsed=68.827ms    mgasps=575.900  number=21,153,430 hash=0xa3397b273b31b013e43487689782f20c03f47525b4cd4107c1715af45a88796e dirty="0.00 B"
-t=2022-09-08T13:00:33+0000 lvl=info msg="Imported new chain segment"             blocks=1    txs=197   mgas=19.364   elapsed=34.663ms    mgasps=558.632  number=21,153,431 hash=0x0c7872b698f28cb5c36a8a3e1e315b1d31bda6109b15467a9735a12380e2ad14 dirty="0.00 B"
-```
-
-#### 6. Interact with fullnode
-Start up `geth`'s built-in interactive [JavaScript console](https://geth.ethereum.org/docs/interface/javascript-console),
-(via the trailing `console` subcommand) through which you can interact using [`web3` methods](https://web3js.readthedocs.io/en/) 
-(note: the `web3` version bundled within `geth` is very old, and not up to date with official docs),
-as well as `geth`'s own [management APIs](https://geth.ethereum.org/docs/rpc/server).
-This tool is optional and if you leave it out you can always attach to an already running
-`geth` instance with `geth attach`.
-
-#### 7. More
-
-More details about [running a node](https://docs.bnbchain.org/bnb-smart-chain/developers/node_operators/full_node/) and [becoming a validator](https://docs.bnbchain.org/bnb-smart-chain/validator/create-val/)
-
-*Note: Although some internal protective measures prevent transactions from
-crossing over between the main network and test network, you should always
-use separate accounts for play and real money. Unless you manually move
-accounts, `geth` will by default correctly separate the two networks and will not make any
-accounts available between them.*
-
-### Configuration
-
-As an alternative to passing the numerous flags to the `geth` binary, you can also pass a
-configuration file via:
+Prepare directories and files:
 
 ```shell
-$ geth --config /path/to/your_config.toml
+sudo mkdir -p /tmp/bsc/config/{mainnet,testnet} /tmp/bsc/data/{mainnet,testnet} /tmp/bsc/secret
+sudo chown -R 1000:1000 /tmp/bsc/data/{mainnet,testnet}
+cp -v ./configs/testnet/config.pruned.toml /tmp/bsc/config/testnet/config.toml
+cp -v ./configs/testnet/genesis.json /tmp/bsc/config/testnet/genesis.json
+cp -v ./password.txt /tmp/bsc/secret/password.txt
 ```
 
-To get an idea of how the file should look like you can use the `dumpconfig` subcommand to
-export your existing configuration:
+For mainnet, copy a mainnet config template to `/tmp/bsc/config/mainnet/config.toml` and prepare the corresponding `genesis.json`.
+
+Run on testnet:
 
 ```shell
-$ geth --your-favourite-flags dumpconfig
+docker compose -f docker-compose.testnet.yml up -d
 ```
 
-### Programmatically interfacing `geth` nodes
+- Volume mappings:
+  - `/tmp/bsc/config/testnet` → `/bsc/config`
+  - `/tmp/bsc/data/testnet` → `/data`
+  - `/tmp/bsc/secret/password.txt` → `/bsc/password.txt`
+- Exposed ports:
+  - HTTP/WS RPC: `8575/8576`
+  - Metrics: `6061`
+  - P2P: `35555/tcp+udp`, `30303/30311`
 
-As a developer, sooner rather than later you'll want to start interacting with `geth` and the
-BSC network via your own programs and not manually through the console. To aid
-this, `geth` has built-in support for a JSON-RPC based APIs ([standard APIs](https://ethereum.org/en/developers/docs/apis/json-rpc/),
-[`geth` specific APIs](https://geth.ethereum.org/docs/interacting-with-geth/rpc), and [BSC's JSON-RPC API Reference](rpc/json-rpc-api.md)).
-These can be exposed via HTTP, WebSockets and IPC (UNIX sockets on UNIX based
-platforms, and named pipes on Windows).
+Run on mainnet (if `docker-compose.yaml` is prepared):
 
-The IPC interface is enabled by default and exposes all the APIs supported by `geth`,
-whereas the HTTP and WS interfaces need to manually be enabled and only expose a
-subset of APIs due to security reasons. These can be turned on/off and configured as
-you'd expect.
-
-HTTP based JSON-RPC API options:
-
-  * `--http` Enable the HTTP-RPC server
-  * `--http.addr` HTTP-RPC server listening interface (default: `localhost`)
-  * `--http.port` HTTP-RPC server listening port (default: `8545`)
-  * `--http.api` API's offered over the HTTP-RPC interface (default: `eth,net,web3`)
-  * `--http.corsdomain` Comma separated list of domains from which to accept cross-origin requests (browser enforced)
-  * `--ws` Enable the WS-RPC server
-  * `--ws.addr` WS-RPC server listening interface (default: `localhost`)
-  * `--ws.port` WS-RPC server listening port (default: `8546`)
-  * `--ws.api` API's offered over the WS-RPC interface (default: `eth,net,web3`)
-  * `--ws.origins` Origins from which to accept WebSocket requests
-  * `--ipcdisable` Disable the IPC-RPC server
-  * `--ipcpath` Filename for IPC socket/pipe within the datadir (explicit paths escape it)
-
-You'll need to use your own programming environments' capabilities (libraries, tools, etc) to
-connect via HTTP, WS or IPC to a `geth` node configured with the above flags and you'll
-need to speak [JSON-RPC](https://www.jsonrpc.org/specification) on all transports. You
-can reuse the same connection for multiple requests!
-
-**Note: Please understand the security implications of opening up an HTTP/WS based
-transport before doing so! Hackers on the internet are actively trying to subvert
-BSC nodes with exposed APIs! Further, all browser tabs can access locally
-running web servers, so malicious web pages could try to subvert locally available
-APIs!**
-
-### Operating a private network
-- [BSC-Deploy](https://github.com/bnb-chain/node-deploy/): deploy tool for setting up BNB Smart Chain.
-
-## Running a bootnode
-
-Bootnodes are super-lightweight nodes that are not behind a NAT and are running just discovery protocol. When you start up a node it should log your enode, which is a public identifier that others can use to connect to your node. 
-
-First the bootnode requires a key, which can be created with the following command, which will save a key to boot.key:
-
-```
-bootnode -genkey boot.key
+```shell
+docker compose -f docker-compose.yaml up -d
 ```
 
-This key can then be used to generate a bootnode as follows:
+Container entry behavior:
 
+- Reads `Node.DataDir` from `/bsc/config/config.toml` (recommended to set it to `/data`).
+- If the data directory does not contain a `geth` subdirectory, it will first run a one-time `init` using `/bsc/config/genesis.json`, then start the node.
+
+#### 2.4 Run inside a TEE (high-level)
+
+Running inside a TEE typically involves preparing a trusted dataset (snapshot, configs, keystore and secrets), loading the `trustnet-builder` image inside the enclave environment, and starting the node with a non-interactive script that handles `init` and `start`. The exact flow depends on your TEE platform and deployment tooling and is therefore left to the operator.
+
+### 3. Configuration (MEV-related)
+
+The default testnet configuration is at `configs/testnet/config.toml`. General
+chain, txpool and node options (`[Eth]`, `[Eth.Miner]`, `[Eth.TxPool]`,
+`[Eth.GPO]`, `[Node]`, `[Node.P2P]`, `[Node.LogConfig]` etc.) follow the
+upstream BSC builder and are not repeated here.
+
+#### 3.1 MEV / builder config `[Eth.Miner.Mev]`
+
+The most important options for TrustNet TEE Builder are:
+
+- `BuilderEnabled = true`
+- `BuilderAccount = "0x00011b01928e3c1b361dd2ff4b07ee361de70307"`
+- `MinBribe = "1000000000000000"`
+- `BuilderControlEOA = "0xb407870f1ae4abac6a27020019dc96365c32f1fd"`
+
+A minimal example:
+
+```toml
+[Eth.Miner.Mev]
+BuilderEnabled = true
+BuilderAccount = "0x00011b01928e3c1b361dd2ff4b07ee361de70307"
+MinBribe = "1000000000000000"
+BuilderControlEOA = "0xb407870f1ae4abac6a27020019dc96365c32f1fd"
 ```
-bootnode -nodekey boot.key -addr :30311 -network bsc
+
+Meaning:
+
+- `BuilderEnabled`: enable private bundle building and auction logic.
+- `BuilderAccount`: receives gas fees and effective bribes from winning bundles.
+- `MinBribe`: minimum bribe threshold; bundles below this value are filtered out during auction.
+- `BuilderControlEOA`: control address that receives bribes; transfers to this address are aggregated as `bribe` in the bundle simulation.
+
+`[[Eth.Miner.Mev.Validators]]`:
+
+- Configure builder endpoints for validators:
+  - `Address`: validator address.
+  - `URL`: MEV/PBS endpoint (e.g. official BSC testnet/private endpoints).
+
+### 4. APIs: send_Bundle and mev_privateBundleAuction
+
+This section documents two commonly used APIs for private transaction handling.
+
+#### 4.1 send_Bundle (`bundle_sendBundle`)
+
+On this node, `SendBundle` is exposed as part of the `bundle` namespace:
+
+- JSON-RPC method name: `bundle_sendBundle`
+- Params: a single `SendBundleArgs` object
+- Return: bundle hash (`common.Hash`)
+
+`SendBundleArgs` (JSON view):
+
+```json
+{
+  "txs": ["0x...", "0x..."],
+  "maxBlockNumber": 0,
+  "minTimestamp": 0,
+  "maxTimestamp": 0,
+  "revertingTxHashes": ["0x...", "0x..."],
+  "droppingTxHashes": ["0x...", "0x..."]
+}
 ```
 
-The choice of port passed to -addr is arbitrary. 
-The bootnode command returns the following logs to the terminal, confirming that it is running:
+Field semantics:
 
+- `txs`: ordered list of RLP-encoded signed transactions (hex string with `0x` prefix).
+- `maxBlockNumber`:
+  - If non-zero, it is the last block number in which the bundle may be included.
+  - If zero and `maxTimestamp` is not set, the server will automatically set `MaxBlockNumber` to `currentBlock + MaxBundleAliveBlock`.
+- `minTimestamp` / `maxTimestamp`:
+  - Unit is seconds (same as the block header `Time`).
+  - If both are zero, the server will set `maxTimestamp` to `currentBlockTime + MaxBundleAliveTime`.
+  - If both are set, the node will enforce `maxTimestamp > minTimestamp`, not earlier than current block time, and not later than `currentBlockTime + MaxBundleAliveTime`.
+- `revertingTxHashes`:
+  - These transactions may fail without causing the entire bundle to be treated as failed.
+- `droppingTxHashes`:
+  - Transactions that fail in execution or receipt and belong to `droppingTxHashes` will be dropped from the bundle while the rest continues.
+
+If parameters are invalid, the node returns JSON-RPC error code `-38000` (`InvalidBundleParamError`).
+
+Example JSON-RPC call:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "bundle_sendBundle",
+  "params": [
+    {
+      "txs": ["0xf86b808504a817c80082520894...", "0xf86b018504a817c80082520894..."],
+      "maxBlockNumber": 0,
+      "minTimestamp": 0,
+      "maxTimestamp": 0,
+      "revertingTxHashes": [],
+      "droppingTxHashes": []
+    }
+  ]
+}
 ```
-enode://3063d1c9e1b824cfbb7c7b6abafa34faec6bb4e7e06941d218d760acdd7963b274278c5c3e63914bd6d1b58504c59ec5522c56f883baceb8538674b92da48a96@127.0.0.1:0?discport=30311
-Note: you're using cmd/bootnode, a developer tool.
-We recommend using a regular node as bootstrap node for production deployments.
-INFO [08-21|11:11:30.687] New local node record                    seq=1,692,616,290,684 id=2c9af1742f8f85ce ip=<nil> udp=0 tcp=0
-INFO [08-21|12:11:30.753] New local node record                    seq=1,692,616,290,685 id=2c9af1742f8f85ce ip=54.217.128.118 udp=30311 tcp=0
-INFO [09-01|02:46:26.234] New local node record                    seq=1,692,616,290,686 id=2c9af1742f8f85ce ip=34.250.32.100  udp=30311 tcp=0
+
+If you use the Go SDK provided in this repo (`ethclient.Client`), you can call the helper:
+
+```go
+hash, err := client.SendBundle(ctx, args)
 ```
 
-## Contribution
+This helper currently uses the method name `eth_sendBundle` to remain compatible with some ecosystems. In deployment you can route this to your node’s `bundle_sendBundle` via a proxy or adjust the method name accordingly.
 
-Thank you for considering helping out with the source code! We welcome contributions
-from anyone on the internet, and are grateful for even the smallest of fixes!
+#### 4.2 mev_privateBundleAuction
 
-If you'd like to contribute to bsc, please fork, fix, commit and send a pull request
-for the maintainers to review and merge into the main code base. If you wish to submit
-more complex changes though, please check up with the core devs first on [our discord channel](https://discord.gg/bnbchain)
-to ensure those changes are in line with the general philosophy of the project and/or get
-some early feedback which can make both your efforts much lighter as well as our review
-and merge procedures quick and simple.
+JSON-RPC method:
 
-Please make sure your contributions adhere to our coding guidelines:
+- Name: `mev_privateBundleAuction`
+- Namespace: `mev`
+- Param: a single `bundleHash` (`0x...`)
+- Return:
+  - If found: a `PrivateBundleAuctionResult` object
+  - If not found: `null`
 
- * Code must adhere to the official Go [formatting](https://golang.org/doc/effective_go.html#formatting)
-   guidelines (i.e. uses [gofmt](https://golang.org/cmd/gofmt/)).
- * Code must be documented adhering to the official Go [commentary](https://golang.org/doc/effective_go.html#commentary)
-   guidelines.
- * Pull requests need to be based on and opened against the `master` branch.
- * Commit messages should be prefixed with the package(s) they modify.
-   * E.g. "eth, rpc: make trace configs optional"
+`PrivateBundleAuctionResult` structure:
 
-Please see the [Developers' Guide](https://geth.ethereum.org/docs/developers/geth-developer/dev-guide)
-for more details on configuring your environment, managing project dependencies, and
-testing procedures.
+```json
+{
+  "blockNumber": "0x...",
+  "parentHash": "0x...",
+  "winnerBundle": "0x...",
+  "secondBundle": "0x...",
+  "scoreWinner": "0x...",
+  "scoreSecond": "0x...",
+  "bribeWinner": "0x...",
+  "bribeSecond": "0x...",
+  "refundTotal": "0x...",
+  "winnerBribeBySender": {
+    "0xSender1": "0x...",
+    "0xSender2": "0x..."
+  },
+  "createdAt": 1730000000000
+}
+```
 
-## License
+Field semantics:
 
-The bsc library (i.e. all code outside of the `cmd` directory) is licensed under the
-[GNU Lesser General Public License v3.0](https://www.gnu.org/licenses/lgpl-3.0.en.html),
-also included in our repository in the `COPYING.LESSER` file.
+- `blockNumber`: block number where the auction happened (hex string).
+- `parentHash`: parent block hash of the produced block.
+- `winnerBundle`: hash of the private bundle that was finally included in the block.
+- `secondBundle`: hash of the bundle with the second highest score (if any).
+- `scoreWinner` / `scoreSecond`: scores of the respective bundles, i.e. `gasFees + bribe`.
+- `bribeWinner` / `bribeSecond`: total bribe amounts for the winner and the runner-up.
+- `refundTotal`: `max(bribeWinner - bribeSecond, 0)`, representing the refundable part of the bribe.
+- `winnerBribeBySender`: per-sender breakdown of bribes to `BuilderControlEOA`.
+- `createdAt`: timestamp when this record was created inside the node (milliseconds).
 
-The bsc binaries (i.e. all code inside of the `cmd` directory) is licensed under the
-[GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html), also
-included in our repository in the `COPYING` file.
+Internal behavior:
+
+- When building a block, the node writes the winner and second bundle info into an internal `PrivateBundleAuction` structure and stores it in an in-memory LRU cache maintained by the miner.
+- When queried, the miner reads from this cache and the MEV RPC layer converts it into the public `PrivateBundleAuctionResult` structure.
+- The implementation only keeps a limited number of recent auction records in memory and does not persist them to an external database; after a restart or once evicted by the LRU policy, a historical `bundleHash` will yield `null`.
+
+Example call:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "mev_privateBundleAuction",
+  "params": ["0x<bundle-hash>"]
+}
+```
+
+返回示例（有记录）：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "blockNumber": "0x2820c4",
+    "parentHash": "0x...",
+    "winnerBundle": "0x...",
+    "secondBundle": "0x...",
+    "scoreWinner": "0x...",
+    "scoreSecond": "0x...",
+    "bribeWinner": "0x...",
+    "bribeSecond": "0x...",
+    "refundTotal": "0x...",
+    "winnerBribeBySender": {
+      "0xabc...": "0x...",
+      "0xdef...": "0x..."
+    },
+    "createdAt": 1730000000000
+  }
+}
+```
