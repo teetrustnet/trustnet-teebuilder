@@ -103,18 +103,18 @@ func (m *MevAPI) Running() bool {
 	return m.b.MevRunning()
 }
 
-type PrivateBundleAuctionResult struct {
-	BlockNumber         hexutil.Uint64                 `json:"blockNumber"`
-	ParentHash          common.Hash                    `json:"parentHash"`
-	WinnerBundle        common.Hash                    `json:"winnerBundle"`
-	SecondBundle        common.Hash                    `json:"secondBundle"`
-	ScoreWinner         *hexutil.Big                   `json:"scoreWinner,omitempty"`
-	ScoreSecond         *hexutil.Big                   `json:"scoreSecond,omitempty"`
-	BribeWinner         *hexutil.Big                   `json:"bribeWinner,omitempty"`
-	BribeSecond         *hexutil.Big                   `json:"bribeSecond,omitempty"`
-	RefundTotal         *hexutil.Big                   `json:"refundTotal,omitempty"`
+type BundleAuctionResult struct {
+	BlockNumber         hexutil.Uint64                  `json:"blockNumber"`
+	ParentHash          common.Hash                     `json:"parentHash"`
+	WinnerBundle        common.Hash                     `json:"winnerBundle"`
+	SecondBundle        common.Hash                     `json:"secondBundle"`
+	ScoreWinner         *hexutil.Big                    `json:"scoreWinner,omitempty"`
+	ScoreSecond         *hexutil.Big                    `json:"scoreSecond,omitempty"`
+	BribeWinner         *hexutil.Big                    `json:"bribeWinner,omitempty"`
+	BribeSecond         *hexutil.Big                    `json:"bribeSecond,omitempty"`
+	RefundTotal         *hexutil.Big                    `json:"refundTotal,omitempty"`
 	WinnerBribeBySender map[common.Address]*hexutil.Big `json:"winnerBribeBySender,omitempty"`
-	CreatedAt           int64                          `json:"createdAt"`
+	CreatedAt           int64                           `json:"createdAt"`
 }
 
 func newHexBig(v *big.Int) *hexutil.Big {
@@ -126,13 +126,13 @@ func newHexBig(v *big.Int) *hexutil.Big {
 	return b
 }
 
-func toPrivateBundleAuctionResult(info *PrivateBundleAuctionInfo) *PrivateBundleAuctionResult {
+func toBundleAuctionResult(info *PrivateBundleAuctionInfo) *BundleAuctionResult {
 	if info == nil {
 		return nil
 	}
-	res := &PrivateBundleAuctionResult{
-		BlockNumber: hexutil.Uint64(info.BlockNumber),
-		ParentHash:  info.ParentHash,
+	res := &BundleAuctionResult{
+		BlockNumber:  hexutil.Uint64(info.BlockNumber),
+		ParentHash:   info.ParentHash,
 		WinnerBundle: info.WinnerBundle,
 		SecondBundle: info.SecondBundle,
 		CreatedAt:    info.CreatedAt.UnixMilli(),
@@ -149,14 +149,6 @@ func toPrivateBundleAuctionResult(info *PrivateBundleAuctionInfo) *PrivateBundle
 		}
 	}
 	return res
-}
-
-func (m *MevAPI) PrivateBundleAuction(_ context.Context, bundleHash common.Hash) (*PrivateBundleAuctionResult, error) {
-	info := m.b.PrivateBundleAuction(bundleHash)
-	if info == nil {
-		return nil, nil
-	}
-	return toPrivateBundleAuctionResult(info), nil
 }
 
 // ReportIssue is served by builder, for receiving issue from validators

@@ -152,32 +152,35 @@ type Backend interface {
 }
 
 func GetAPIs(apiBackend Backend) []rpc.API {
-    nonceLock := new(AddrLocker)
-    return []rpc.API{
-        {
-            Namespace: "eth",
-            Service:   NewEthereumAPI(apiBackend),
-        }, {
-            Namespace: "eth",
-            Service:   NewBlockChainAPI(apiBackend),
-        }, {
-            Namespace: "eth",
-            Service:   NewTransactionAPI(apiBackend, nonceLock),
-        }, {
-            Namespace: "txpool",
-            Service:   NewTxPoolAPI(apiBackend),
-        }, {
-            Namespace: "debug",
-            Service:   NewDebugAPI(apiBackend),
-        }, {
-            Namespace: "eth",
-            Service:   NewEthereumAccountAPI(apiBackend.AccountManager()),
-        }, {
-            Namespace: "mev",
-            Service:   NewMevAPI(apiBackend),
-        }, {
-            Namespace: "bundle",
-            Service:   NewPrivateTxBundleAPI(apiBackend),
-        },
-    }
+	nonceLock := new(AddrLocker)
+	return []rpc.API{
+		{
+			Namespace: "eth",
+			Service:   NewEthereumAPI(apiBackend),
+		}, {
+			Namespace: "eth",
+			Service:   NewBlockChainAPI(apiBackend),
+		}, {
+			Namespace: "eth",
+			Service:   NewTransactionAPI(apiBackend, nonceLock),
+		}, {
+			Namespace: "txpool",
+			Service:   NewTxPoolAPI(apiBackend),
+		}, {
+			Namespace: "debug",
+			Service:   NewDebugAPI(apiBackend),
+		}, {
+			Namespace: "eth",
+			Service:   NewEthereumAccountAPI(apiBackend.AccountManager()),
+		}, {
+			Namespace: "mev",
+			Service:   NewMevAPI(apiBackend),
+		}, {
+			Namespace: "bundle",
+			Service:   NewPrivateTxBundleAPI(apiBackend),
+		}, {
+			Namespace: "tee",
+			Service:   NewTeeAPI(apiBackend),
+		},
+	}
 }

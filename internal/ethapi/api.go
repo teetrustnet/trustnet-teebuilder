@@ -2086,12 +2086,12 @@ func (api *TransactionAPI) SendRawTransactionConditional(ctx context.Context, in
 // future syncs.
 //
 // See SendRawTransaction.
-func (s *TransactionAPI) SendPrivateRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
+func (api *TransactionAPI) SendPrivateRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
 	tx := new(types.Transaction)
 	if err := tx.UnmarshalBinary(input); err != nil {
 		return common.Hash{}, err
 	}
-	return SubmitTransaction(ctx, s.b, tx, true)
+	return SubmitTransaction(ctx, api.b, tx, true)
 }
 
 // Sign calculates an ECDSA signature for:

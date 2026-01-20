@@ -193,15 +193,15 @@ Meaning:
   - `Address`: validator address.
   - `URL`: MEV/PBS endpoint (e.g. official BSC testnet/private endpoints).
 
-### 4. APIs: send_Bundle and mev_privateBundleAuction
+### 4. APIs: send_Bundle and tee_bundleAuction
 
 This section documents two commonly used APIs for private transaction handling.
 
-#### 4.1 send_Bundle (`bundle_sendBundle`)
+#### 4.1 send_Bundle (`tee_sendBundle`)
 
-On this node, `SendBundle` is exposed as part of the `bundle` namespace:
+On this node, `SendBundle` is exposed as part of the `tee` namespace:
 
-- JSON-RPC method name: `bundle_sendBundle`
+- JSON-RPC method name: `tee_sendBundle`
 - Params: a single `SendBundleArgs` object
 - Return: bundle hash (`common.Hash`)
 
@@ -223,11 +223,11 @@ Field semantics:
 - `txs`: ordered list of RLP-encoded signed transactions (hex string with `0x` prefix).
 - `maxBlockNumber`:
   - If non-zero, it is the last block number in which the bundle may be included.
-  - If zero and `maxTimestamp` is not set, the server will automatically set `MaxBlockNumber` to `currentBlock + MaxBundleAliveBlock`.
+  - If set, it must not be larger than `currentBlock + MaxBundleAliveBlock`.
 - `minTimestamp` / `maxTimestamp`:
   - Unit is seconds (same as the block header `Time`).
-  - If both are zero, the server will set `maxTimestamp` to `currentBlockTime + MaxBundleAliveTime`.
-  - If both are set, the node will enforce `maxTimestamp > minTimestamp`, not earlier than current block time, and not later than `currentBlockTime + MaxBundleAliveTime`.
+  - If `maxBlockNumber` is zero and `maxTimestamp` is unset or zero, the server will set `maxTimestamp` to `currentBlockTime + MaxBundleAliveTime`.
+  - If both are set, the node enforces `maxTimestamp > minTimestamp`, `maxTimestamp >= currentBlockTime`, and both not later than `currentBlockTime + MaxBundleAliveTime`.
 - `revertingTxHashes`:
   - These transactions may fail without causing the entire bundle to be treated as failed.
 - `droppingTxHashes`:
@@ -241,7 +241,7 @@ Example JSON-RPC call:
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "bundle_sendBundle",
+  "method": "tee_sendBundle",
   "params": [
     {
       "txs": ["0xf86b808504a817c80082520894...", "0xf86b018504a817c80082520894..."],
@@ -261,20 +261,20 @@ If you use the Go SDK provided in this repo (`ethclient.Client`), you can call t
 hash, err := client.SendBundle(ctx, args)
 ```
 
-This helper currently uses the method name `eth_sendBundle` to remain compatible with some ecosystems. In deployment you can route this to your node’s `bundle_sendBundle` via a proxy or adjust the method name accordingly.
+This helper currently uses the method name `eth_sendBundle` to remain compatible with some ecosystems. In deployment you can route this to your node’s `tee_sendBundle` via a proxy or adjust the method name accordingly.
 
-#### 4.2 mev_privateBundleAuction
+#### 4.2 tee_bundleAuction
 
 JSON-RPC method:
 
-- Name: `mev_privateBundleAuction`
-- Namespace: `mev`
+- Name: `tee_bundleAuction`
+- Namespace: `tee`
 - Param: a single `bundleHash` (`0x...`)
 - Return:
-  - If found: a `PrivateBundleAuctionResult` object
+  - If found: a `BundleAuctionResult` object
   - If not found: `null`
 
-`PrivateBundleAuctionResult` structure:
+`BundleAuctionResult` structure:
 
 ```json
 {
@@ -310,7 +310,7 @@ Field semantics:
 Internal behavior:
 
 - When building a block, the node writes the winner and second bundle info into an internal `PrivateBundleAuction` structure and stores it in an in-memory LRU cache maintained by the miner.
-- When queried, the miner reads from this cache and the MEV RPC layer converts it into the public `PrivateBundleAuctionResult` structure.
+- When queried, the miner reads from this cache and the TEE RPC layer converts it into the public `BundleAuctionResult` structure.
 - The implementation only keeps a limited number of recent auction records in memory and does not persist them to an external database; after a restart or once evicted by the LRU policy, a historical `bundleHash` will yield `null`.
 
 Example call:
@@ -319,7 +319,7 @@ Example call:
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "mev_privateBundleAuction",
+  "method": "tee_bundleAuction",
   "params": ["0x<bundle-hash>"]
 }
 ```
