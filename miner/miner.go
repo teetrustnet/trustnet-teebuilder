@@ -76,13 +76,13 @@ func New(eth Backend, config *minerconfig.Config, mux *event.TypeMux, engine con
         worker:  newWorker(config, engine, eth, mux),
     }
 
-    miner.bidSimulator = newBidSimulator(&config.Mev, config.DelayLeftOver, config.GasPrice, eth, eth.BlockChain().Config(), engine, miner.worker)
-    miner.worker.setBestBidFetcher(miner.bidSimulator)
+	miner.bidSimulator = newBidSimulator(&config.Mev, config.DelayLeftOver, config.GasPrice, config.TxGasLimit, eth, eth.BlockChain().Config(), engine, miner.worker)
+	miner.worker.setBestBidFetcher(miner.bidSimulator)
 
-    // initialize bidder in builder mode
-    if config.Mev.BuilderEnabled != nil && *config.Mev.BuilderEnabled {
-        miner.worker.bidder = NewBidder(&config.Mev, *config.DelayLeftOver, engine, eth)
-    }
+	// initialize bidder in builder mode
+	if config.Mev.BuilderEnabled != nil && *config.Mev.BuilderEnabled {
+		miner.worker.bidder = NewBidder(&config.Mev, *config.DelayLeftOver, engine, eth)
+	}
 
 	miner.wg.Add(1)
 	go miner.update()
@@ -378,4 +378,8 @@ func (miner *Miner) prepareSimulationEnv(parent *types.Header, state *state.Stat
 	env.size = uint32(env.header.Size())
 
 	return env, nil
+}
+
+func (miner *Miner) TxGasLimit() uint64 {
+	return miner.worker.getTxGasLimit()
 }
