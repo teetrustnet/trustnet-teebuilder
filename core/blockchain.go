@@ -2743,7 +2743,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ma
 		numbers []uint64
 	)
 	parent := it.previous()
-	for parent != nil && !bc.HasState(parent.Root) {
+	for parent != nil && !bc.HasBlockAndState(parent.Hash(), parent.Number.Uint64()) {
 		if bc.stateRecoverable(parent.Root) {
 			if err := bc.triedb.Recover(parent.Root); err != nil {
 				return nil, 0, err
