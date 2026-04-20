@@ -678,3 +678,11 @@ func (b *EthAPIBackend) PrivateBundleAuction(bundleHash common.Hash) *ethapi.Pri
 	}
 	return info
 }
+
+func (b *EthAPIBackend) RPCTxSyncDefaultTimeout() time.Duration {
+	return b.eth.config.TxSyncDefaultTimeout
+}
+
+func (b *EthAPIBackend) RPCTxSyncMaxTimeout() time.Duration {
+	return b.eth.config.TxSyncMaxTimeout
+}

@@ -66,15 +66,15 @@ type Miner struct {
 }
 
 func New(eth Backend, config *minerconfig.Config, mux *event.TypeMux, engine consensus.Engine) *Miner {
-    miner := &Miner{
-        mux:     mux,
-        eth:     eth,
-        engine:  engine,
-        exitCh:  make(chan struct{}),
-        startCh: make(chan struct{}),
-        stopCh:  make(chan struct{}),
-        worker:  newWorker(config, engine, eth, mux),
-    }
+	miner := &Miner{
+		mux:     mux,
+		eth:     eth,
+		engine:  engine,
+		exitCh:  make(chan struct{}),
+		startCh: make(chan struct{}),
+		stopCh:  make(chan struct{}),
+		worker:  newWorker(config, engine, eth, mux),
+	}
 
 	miner.bidSimulator = newBidSimulator(&config.Mev, config.DelayLeftOver, config.GasPrice, config.TxGasLimit, eth, eth.BlockChain().Config(), engine, miner.worker)
 	miner.worker.setBestBidFetcher(miner.bidSimulator)
@@ -173,11 +173,11 @@ func (miner *Miner) Stop() {
 }
 
 func (miner *Miner) Close() {
-    close(miner.exitCh)
-    miner.wg.Wait()
-    if miner.worker != nil && miner.worker.bidder != nil {
-        miner.worker.bidder.exit()
-    }
+	close(miner.exitCh)
+	miner.wg.Wait()
+	if miner.worker != nil && miner.worker.bidder != nil {
+		miner.worker.bidder.exit()
+	}
 }
 
 func (miner *Miner) Mining() bool {
@@ -375,7 +375,7 @@ func (miner *Miner) prepareSimulationEnv(parent *types.Header, state *state.Stat
 		core.ProcessParentBlockHash(header.ParentHash, env.evm)
 	}
 
-	env.size = uint32(env.header.Size())
+	env.size = uint64(env.header.Size())
 
 	return env, nil
 }

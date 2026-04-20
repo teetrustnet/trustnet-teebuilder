@@ -123,11 +123,23 @@ func (w *worker) fillTransactionsAndBundles(interruptCh chan int32, env *environ
 		if env.header.ExcessBlobGas != nil {
 			filter.BlobFee = uint256.MustFromBig(eip4844.CalcBlobFee(w.chainConfig, env.header))
 		}
-		filter.OnlyPlainTxs, filter.OnlyBlobTxs = true, false
+		if cap := w.getTxGasLimit(); cap > 0 {
+			filter.GasLimitCap = cap
+		}
+		if w.chainConfig.IsOsaka(env.header.Number, env.header.Time) {
+			filter.GasLimitCap = params.MaxTxGas
+		}
+		filter.BlobTxs = false
 		pendingPlainTxs := w.eth.TxPool().Pending(filter)
 
-		filter.OnlyPlainTxs, filter.OnlyBlobTxs = false, true
-		pendingBlobTxs := w.eth.TxPool().Pending(filter)
+		var pendingBlobTxs map[common.Address][]*txpool.LazyTransaction
+		if env.header.Number.Uint64()%params.BlobEligibleBlockInterval == 0 {
+			filter.BlobTxs = true
+			filter.BlobVersion = types.BlobSidecarVersion0
+			pendingBlobTxs = w.eth.TxPool().Pending(filter)
+		} else {
+			pendingBlobTxs = make(map[common.Address][]*txpool.LazyTransaction)
+		}
 
 		// Split the pending transactions into locals and remotes.
 		prioPlainTxs, normalPlainTxs := make(map[common.Address][]*txpool.LazyTransaction), pendingPlainTxs
@@ -415,8 +427,8 @@ func (w *worker) commitBundles(
 	}
 
 	var coalescedLogs []*types.Log
-    // signal used to encode interrupt reason
-    signal := commitInterruptNone
+	// signal used to encode interrupt reason
+	signal := commitInterruptNone
 LOOP:
 	for _, tx := range txs {
 		// In the following three cases, we will interrupt the execution of the transaction.
@@ -425,13 +437,13 @@ LOOP:
 		// (3) worker recreate the sealing block with any newly arrived transactions, the reason is 2.
 		// For the first two cases, the semi-finished work will be discarded.
 		// For the third case, the semi-finished work will be submitted to the consensus engine.
-        if interruptCh != nil {
-            select {
-            case <-interruptCh:
-                return errBlockInterruptedByNewHead
-            default:
-            }
-        } // If we don't have enough gas for any further transactions then we're done
+		if interruptCh != nil {
+			select {
+			case <-interruptCh:
+				return errBlockInterruptedByNewHead
+			default:
+			}
+		} // If we don't have enough gas for any further transactions then we're done
 		if env.gasPool.Gas() < params.TxGas {
 			log.Trace("Not enough gas for further transactions", "have", env.gasPool, "want", params.TxGas)
 			signal = commitInterruptOutOfGas
@@ -439,7 +451,7 @@ LOOP:
 		}
 		if tx == nil {
 			log.Error("Unexpected nil transaction in bundle")
-            return errors.New("unexpected nil transaction in bundle")
+			return errors.New("unexpected nil transaction in bundle")
 		}
 		if stopTimer != nil {
 			select {
@@ -492,8 +504,8 @@ LOOP:
 		default:
 			// Strange error, discard the transaction and get the next in line (note, the
 			// nonce-too-high clause will prevent us from executing in vain).
-            log.Error("Transaction failed in the bundle", "hash", tx.Hash(), "err", err)
-            return errors.New("bundle commit failed: tx execution error")
+			log.Error("Transaction failed in the bundle", "hash", tx.Hash(), "err", err)
+			return errors.New("bundle commit failed: tx execution error")
 		}
 	}
 
@@ -510,18 +522,18 @@ LOOP:
 			cpy[i] = new(types.Log)
 			*cpy[i] = *l
 		}
-            // pending logs feed disabled in builder mode
+		// pending logs feed disabled in builder mode
 	}
-    switch signal {
-    case commitInterruptNone:
-        return nil
-    case commitInterruptTimeout:
-        return errBlockInterruptedByTimeout
-    case commitInterruptOutOfGas:
-        return errBlockInterruptedByOutOfGas
-    default:
-        return errBlockInterruptedByNewHead
-    }
+	switch signal {
+	case commitInterruptNone:
+		return nil
+	case commitInterruptTimeout:
+		return errBlockInterruptedByTimeout
+	case commitInterruptOutOfGas:
+		return errBlockInterruptedByOutOfGas
+	default:
+		return errBlockInterruptedByNewHead
+	}
 }
 
 // generateOrderedBundles generates ordered txs from the given bundles.
@@ -798,12 +810,12 @@ func (w *worker) simulateBundle(
 	if bundleGasUsed != 0 {
 		bundleGasPrice = new(big.Int).Div(bundleGasFees, new(big.Int).SetUint64(bundleGasUsed))
 
-        // accept bundles if above floor gas price (default 0)
-        floor := big.NewInt(0)
-        if w.config.GasPrice != nil {
-            floor = w.config.GasPrice
-        }
-        if bundleGasPrice.Cmp(floor) < 0 {
+		// accept bundles if above floor gas price (default 0)
+		floor := big.NewInt(0)
+		if w.config.GasPrice != nil {
+			floor = w.config.GasPrice
+		}
+		if bundleGasPrice.Cmp(floor) < 0 {
 			err := errBundlePriceTooLow
 			log.Warn("fail to simulate bundle", "hash", bundle.Hash().String(), "err", err)
 
